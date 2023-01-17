@@ -1,0 +1,8 @@
+augment:
+  distribution: categorical
+  values:
+  - true
+  - false
+weight_decay:
+  min: 0.000001
+  max: 0.05

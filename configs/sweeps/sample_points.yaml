@@ -1,0 +1,7 @@
+sample_points:
+  distribution: q_log_uniform_values
+  min: 2048
+  max: 12000
+batch_size:
+  distribution: constant
+  value: 36

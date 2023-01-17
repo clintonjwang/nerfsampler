@@ -1,0 +1,7 @@
+discretization type:
+  distribution: categorical
+  values:
+  - grid
+  - rqmc
+  - shrunk
+  - random

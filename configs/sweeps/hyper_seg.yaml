@@ -1,0 +1,12 @@
+learning_rate:
+  distribution: log_uniform_values
+  min: 0.00001
+  max: 0.01
+num_layers:
+  distribution: int_uniform
+  min: 2
+  max: 6
+num_channels:
+  distribution: q_log_uniform_values
+  min: 16
+  max: 128

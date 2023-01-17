@@ -1,0 +1,7 @@
+test discretization:
+  distribution: categorical
+  values:
+  - grid
+  - rqmc
+  - shrunk
+  - random

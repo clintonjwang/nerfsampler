@@ -1,0 +1,25 @@
+n_features:
+  distribution: q_log_uniform_values
+  min: 16
+  max: 128
+w_spatial:
+  distribution: log_uniform_values
+  min: 0.000001
+  max: 0.0001
+w_residual:
+  distribution: log_uniform_values
+  min: 0.000001
+  max: 0.001
+weight_decay:
+  distribution: log_uniform_values
+  min: 0.0000000000001
+  max: 0.000001
+n_deform_layers:
+  distribution: int_uniform
+  min: 2
+  max: 4
+time_encoding:
+  distribution: categorical
+  values:
+  - OneBlob
+  - TriangleWave

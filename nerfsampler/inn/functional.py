@@ -15,10 +15,6 @@ import torch
 Tensor = torch.Tensor
 nn=torch.nn
 
-# def change_sample_density(inr: DiscretizedINR):
-#     coords = inr.coords
-#     return coords
-
 def tokenization(inr: DiscretizedField, partitions: tuple[int]):
     """tokenization"""
     bounds = inr.domain.bounds
