@@ -4,6 +4,7 @@ backup/
 *.pt
 *.log
 scripts/
+*.ipynb
 
 __pycache__/
 *.pyc

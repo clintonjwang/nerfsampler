@@ -1,12 +1,8 @@
 from __future__ import annotations
 import seaborn as sns
-import monai.transforms as mtr
 import matplotlib.pyplot as plt
 from glob import glob
 from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from nerfsampler.inn.fields import DiscretizedField
 
 import os
 import torch
@@ -14,12 +10,6 @@ import numpy as np
 from nerfsampler import TMP_DIR
 
 osp = os.path
-
-rescale_clip = mtr.ScaleIntensityRangePercentiles(
-    lower=1, upper=99, b_min=0, b_max=255, clip=True, dtype=np.uint8)
-rescale_noclip = mtr.ScaleIntensityRangePercentiles(
-    lower=0, upper=100, b_min=0, b_max=255, clip=False, dtype=np.uint8)
-
 
 def rgb2d_tensor_to_npy(x):
     if len(x.shape) == 4:
@@ -128,7 +118,7 @@ def parse_float_or_list(x):
 
 
 def glob2(*paths):
-    pattern = osp.expanduser(osp.join(*paths))
+    pattern = osp.expandvars(osp.join(*paths))
     if "*" not in pattern:
         pattern = osp.join(pattern, "*")
     return glob(pattern)

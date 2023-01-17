@@ -2,10 +2,10 @@ import torch
 from math import log
 import numpy as np
 import pdb
-from torch import Tensor, tensor
+from torch import tensor
 
-from nerfsampler.inn.fields import DiscretizedField, FieldBatch
-from nerfsampler.inn.point_set import Discretization
+from nerfsampler.networks.fields import DiscretizedField, FieldBatch
+from nerfsampler.networks.point_set import Discretization
 nn = torch.nn
 F = nn.functional
 
@@ -86,49 +86,6 @@ def contrastive_loss(features, T=0.5):
     loss_ij = -s_ij + torch.log(xs_i - xs_ij)
     return loss_ij.mean()
 
-def adv_loss_fxns(loss_settings: dict):
-    if "WGAN" in loss_settings["adversarial loss type"]:
-        G_fxn = lambda fake_logit: -fake_logit.squeeze()
-        D_fxn = lambda fake_logit, true_logit: (fake_logit - true_logit).squeeze()
-        return G_fxn, D_fxn
-    elif "standard" in loss_settings["adversarial loss type"]:
-        G_fxn = lambda fake_logit: -fake_logit - torch.log1p(torch.exp(-fake_logit))#torch.log(1-torch.sigmoid(fake_logit)).squeeze()
-        D_fxn = lambda fake_logit, true_logit: (fake_logit + torch.log1p(torch.exp(-fake_logit)) + torch.log1p(torch.exp(-true_logit))).squeeze()
-        #-torch.log(1-fake_logit) - torch.log(true_logit)
-        return G_fxn, D_fxn
-    else:
-        raise NotImplementedError
-
-def gradient_penalty(real_img: torch.Tensor, generated_img: torch.Tensor,
-    D: nn.Module):
-    B = real_img.size(0)
-    alpha = torch.rand(B, 1, 1, 1, device='cuda')
-    interp_img = nn.Parameter(alpha*real_img + (1-alpha)*generated_img.detach())
-    interp_logit = D(interp_img)
-
-    grads = torch.autograd.grad(outputs=interp_logit, inputs=interp_img,
-               grad_outputs=torch.ones(interp_logit.size(), device='cuda'),
-               create_graph=True, retain_graph=True)[0].view(B, -1)
-    grads_norm = torch.sqrt(torch.sum(grads ** 2, dim=1) + 1e-12)
-    return (grads_norm - 1) ** 2
-
-def gradient_penalty_inr(real_inr: DiscretizedField,
-    generated_inr: DiscretizedField, D: nn.Module):
-    real_img = real_inr.values
-    generated_img = generated_inr.values
-    B = real_img.size(0)
-    alpha = torch.rand(B, 1, 1, device='cuda')
-    interp_vals = alpha*real_img + (1-alpha)*generated_img.detach()
-    interp_vals.requires_grad = True
-    disc = Discretization(real_inr.coords, real_inr.discretization_type)
-    interp_logit = D(DiscretizedField(disc, interp_vals))
-
-    grads = torch.autograd.grad(outputs=interp_logit, inputs=interp_vals,
-               grad_outputs=torch.ones(interp_logit.size(), device='cuda'),
-               create_graph=True, retain_graph=True)[0].view(B, -1)
-    grads_norm = torch.sqrt(torch.sum(grads ** 2, dim=1) + 1e-12)
-    return (grads_norm - 1) ** 2
-
 def mean_iou(pred_seg, gt_seg):
     # pred_seg [B*N], gt_seg [B*N,C]
     iou_per_channel = (pred_seg & gt_seg).sum(0) / (pred_seg | gt_seg).sum(0)
@@ -136,33 +93,3 @@ def mean_iou(pred_seg, gt_seg):
 
 def pixel_acc(pred_seg, gt_seg):
     return (pred_seg & gt_seg).sum() / pred_seg.size(0)
-
-# def CrossEntropy(N: torch.int16=128):
-#     ce = nn.CrossEntropyLoss()
-#     def ce_loss(pred: FieldBatch, class_ix: torch.Tensor):
-#         coords = pred.generate_discretization(sample_size=N)
-#         return ce(pred(coords), class_ix)
-#     return ce_loss
-
-# def L1_dist_inr(N: int=128):
-#     def l1_qmc(pred: FieldBatch, target: FieldBatch):
-#         coords = target.generate_discretization(sample_size=N)
-#         return (pred(coords)-target(coords)).abs().mean()
-#     return l1_qmc
-# class L1_dist_inr(nn.Module):
-#     def __init__(self, N=128):
-#         self.N = N
-#     def forward(pred,target):
-#         coords = target.generate_discretization(sample_size=N)
-#         return (pred(coords)-target(coords)).abs().mean()
-
-# def L2_dist_inr(N: int=128):
-#     def l2_qmc(pred: FieldBatch, target: FieldBatch):
-#         coords = target.generate_discretization(sample_size=N)
-#         return (pred(coords)-target(coords)).pow(2).mean()
-#     return l2_qmc
-
-# def L1_dist(inr, gt_values, coords: Discretization):
-#     pred = inr(coords)
-#     #pred = util.realign_values(pred, coords_gt=coords, inr=inr)
-#     return (pred-gt_values).abs().mean()

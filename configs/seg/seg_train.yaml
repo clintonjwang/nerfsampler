@@ -4,10 +4,8 @@ network:
   pretrained: true
   frozen: false
 data loading:
-  seg type: coarse
-  batch size: 32
   subset: train
-  dataset: cityscapes
+  dataset: klevr
   classes: 7
   discretization: grid
   sample points: 8192

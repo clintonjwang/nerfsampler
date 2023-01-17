@@ -4,7 +4,7 @@ data loading:
   seg type: fine
   batch size: 32
   subset: val
-  dataset: cityscapes
+  dataset: klevr
   classes: 7
   discretization type: qmc
   sample points: 8192

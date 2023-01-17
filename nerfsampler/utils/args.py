@@ -115,43 +115,6 @@ def get_wandb_fit_config():
     wandb.config.persist()
     args = dict(wandb.config.items())
 
-    # if args['deformation_encoding'] == 'Composite':
-    #     args['deformation']['encoding_config'] = {
-    #         'otype': 'Composite',
-    #         'nested': [0, 0]
-    #     }
-    #     if args.get('spatial_encoding', None) == 'OneBlob':
-    #         args['deformation']['encoding_config']['nested'][0] = {
-    #             'n_dims_to_encode': 3,
-    #             'otype': 'OneBlob',
-    #             'n_bins': 64
-    #         }
-    #     else:
-    #         args['deformation']['encoding_config']['nested'][0] = {
-    #             'n_dims_to_encode': 3,
-    #             'otype': 'TriangleWave',
-    #             'n_frequencies': 7
-    #         }
-    # if args['time_encoding'] == 'OneBlob':
-    #     if 'nested' in args['deformation']['encoding_config']:
-    #         args['deformation']['encoding_config']['nested'][1] = {
-    #             'otype': 'OneBlob',
-    #             'n_bins': 128
-    #         }
-    #     args['residual']['encoding_config']['nested'][1] = {
-    #         'otype': 'OneBlob',
-    #         'n_bins': 64
-    #     }
-    # else:
-    #     if 'nested' in args['deformation']['encoding_config']:
-    #         args['deformation']['encoding_config']['nested'][1] = {
-    #             'otype': 'TriangleWave',
-    #             'n_frequencies': 8
-    #         }
-    #     args['residual']['encoding_config']['nested'][1] = {
-    #         'otype': 'TriangleWave',
-    #         'n_frequencies': 7
-    #     }
 
     yaml.safe_dump(args, open(osp.join(args['paths']["job output dir"], "config.yaml"), 'w'))
     return args
@@ -174,15 +137,6 @@ def args_from_file(path, cmd_args=None):
     if osp.exists(path):
         args = yaml.safe_load(open(path, 'r'))
     else:
-        # if cmd_args.config_name.endswith('1k'):
-        #     path = path.replace('1k.yaml', '.yaml')
-        #     if osp.exists(path):
-        #         args = yaml.safe_load(open(path, 'r'))
-        #         if 'data loading' in args: raise NotImplementedError
-        #         args['data loading'] = {'N': 1000}
-        #     else:
-        #         raise ValueError(f"bad config_name {cmd_args.config_name}")
-        # else:
         raise ValueError(f"bad config_name {cmd_args.config_name}")
 
     if cmd_args is not None:

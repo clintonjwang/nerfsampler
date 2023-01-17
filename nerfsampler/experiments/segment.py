@@ -12,17 +12,16 @@ import matplotlib.pyplot as plt
 
 from nerfsampler.utils import args as args_module
 from nerfsampler.data import dataloader
-from nerfsampler import inn, RESULTS_DIR
-from nerfsampler.inn import point_set
-import nerfsampler.inn.nets.convnext
+from nerfsampler import networks, RESULTS_DIR, DS_DIR
+from nerfsampler.networks import point_set
+import nerfsampler.networks.nets.convnext
 import nerfsampler.baselines.convnext
 import nerfsampler.baselines.classifier
 import nerfsampler.baselines.hypernets
 import nerfsampler.baselines.nuft
-import nerfsampler.inn.nets.field2field
+import nerfsampler.networks.nets.field2field
 
 rescale_float = mtr.ScaleIntensity()
-DS_DIR = osp.expandvars("$DS_DIR")
 
 class_names=('void', 'ground', 'building', 'traffic', 'nature', 'sky', 'human', 'vehicle')
 def train_segmenter(args: dict) -> None:
@@ -30,6 +29,8 @@ def train_segmenter(args: dict) -> None:
         config=wandb.helper.parse_config(args, exclude=['job_id']))
     args = args_module.get_wandb_train_config()
     paths = args["paths"]
+
+    osp.expandvars('$DS_DIR/nerfacto/0/nerfacto/2023-01-13_145424/nerfstudio_models/')
 
     dl_args = args["data loading"]
     global_step = 0
@@ -242,8 +243,8 @@ def get_model_for_args(args):
     depth = args['network'].get('depth', 3)
     C = args['network'].get('channels', 128)
     kwargs = dict(in_channels=3, out_channels=7)
-    if hasattr(inn.nets.field2field, ntype):
-        module = getattr(inn.nets.field2field, ntype)
+    if hasattr(networks.nets.field2field, ntype):
+        module = getattr(networks.nets.field2field, ntype)
         kwargs["sampler"] = point_set.get_sampler_from_args(args['data loading'])
     elif hasattr(nerfsampler.baselines.classifier, ntype):
         module = getattr(nerfsampler.baselines.classifier, ntype)
@@ -268,12 +269,12 @@ def get_model_for_args(args):
         if ntype == "convnext":
             return nerfsampler.baselines.convnext.mini_convnext()
         elif ntype == "inr-convnext":
-            InrNet = nerfsampler.inn.nets.convnext.translate_convnext_model(
+            InrNet = nerfsampler.networks.nets.convnext.translate_convnext_model(
                     args["data loading"]["image shape"], sampler=sampler)
         elif ntype == "inr-mlpconv":
-            InrNet = nerfsampler.inn.nets.convnext.translate_convnext_model(
+            InrNet = nerfsampler.networks.nets.convnext.translate_convnext_model(
                     args["data loading"]["image shape"], sampler=sampler)
-            inn.nerfsampler.replace_conv_kernels(InrNet, k_type='mlp')
+            networks.nerfsampler.replace_conv_kernels(InrNet, k_type='mlp')
         else:
             raise NotImplementedError
     return InrNet
