@@ -7,10 +7,13 @@ from nerfsampler import CODE_DIR, DS_DIR
 from nerfsampler.utils.util import glob2
 from nerfstudio.utils.eval_utils import eval_setup
 
-def load_nerfacto_for_scene(scene_id=0):
+def load_nerf_pipeline_for_scene(scene_id=0):
+    os.chdir(f'{CODE_DIR}/kubric')
     path = glob2(f'{DS_DIR}/nerfacto/{scene_id}/nerfacto/*/config.yml')[0]
     config, pipeline, checkpoint_path = eval_setup(Path(path), test_mode="inference")
-    return config, pipeline, checkpoint_path
+    pipeline.eval()
+    return pipeline
+        
 
 # def clean_kubric():
 #     """

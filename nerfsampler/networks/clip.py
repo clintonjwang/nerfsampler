@@ -2,26 +2,25 @@
 import torch
 import numpy as np
 
-from transformers import CLIPFeatureExtractor, CLIPTextModel, CLIPTokenizer
+from transformers import CLIPTextModel, CLIPTokenizer
 
 nn=torch.nn
 F=nn.functional
 
-class CLIP(nn.Module):
-    def __init__(
-        self,
-        text_encoder: CLIPTextModel,
-    ):
+class TextEmbedder(nn.Module):
+    def __init__(self):
         super().__init__()
-        self.text_encoder = text_encoder
+        self.text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32")
+        self.tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
+        self.device = 'cuda'
 
-    def forward(self, prompts, device):
-        text_embeddings = self.text_encoder(
-            text_input_ids.to(device),
+    def forward(self, prompt):
+        text_input = self.tokenizer(
+            prompt,
+            padding="max_length",
+            max_length=self.tokenizer.model_max_length,
+            truncation=True,
+            return_tensors="pt",
         )
-        text_embeddings = text_embeddings[0]
-
-        # duplicate text embeddings for each generation per prompt, using mps friendly method
-        bs_embed, seq_len, _ = text_embeddings.shape
-        text_embeddings = text_embeddings.repeat(1, num_images_per_prompt, 1)
-        text_embeddings = text_embeddings.view(bs_embed * num_images_per_prompt, seq_len, -1)
+        text_embeddings = self.text_encoder(text_input.input_ids.to(self.device))[0]
+        return text_embeddings

@@ -1,11 +1,8 @@
 import torch
 from math import log
 import numpy as np
-import pdb
 from torch import tensor
 
-from nerfsampler.networks.fields import DiscretizedField, FieldBatch
-from nerfsampler.networks.point_set import Discretization
 nn = torch.nn
 F = nn.functional
 
