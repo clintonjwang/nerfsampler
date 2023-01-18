@@ -1,4 +1,5 @@
 results/
+models/
 temp/
 backup/
 *.pt
