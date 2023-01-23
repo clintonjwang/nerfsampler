@@ -15,8 +15,7 @@ class TextEmbedder(nn.Module):
         with torch.no_grad():
             all_text_embeddings = []
             for category in categories:
-                texts = clip.tokenize(category)  #tokenize
-                texts = texts.cuda()
+                texts = clip.tokenize(category).cuda()  #tokenize
                 text_embeddings = self.model.encode_text(texts)  #embed with text encoder
                 text_embeddings /= text_embeddings.norm(dim=-1, keepdim=True)
                 text_embedding = text_embeddings.mean(dim=0)
@@ -24,4 +23,5 @@ class TextEmbedder(nn.Module):
                 all_text_embeddings.append(text_embedding)
             all_text_embeddings = torch.stack(all_text_embeddings, dim=1)
             
-        return all_text_embeddings.cuda()
+        return all_text_embeddings
+        

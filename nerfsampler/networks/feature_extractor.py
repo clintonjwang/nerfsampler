@@ -2,22 +2,34 @@ import torch, pdb
 nn=torch.nn
 F=nn.functional
 
-from transformers import SegformerFeatureExtractor, SegformerForSemanticSegmentation
-
 import tensorflow.compat.v1 as tf
 import tensorflow as tf2
 
+from PIL import Image
+import numpy as np
 
 class FeatureExtractor(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         self.model = tf2.saved_model.load('./models', tags=[tf.saved_model.tag_constants.SERVING],)
         
-    def forward(self, image, text_emb):
-        img = tf.convert_to_tensor(image.cpu())
-        pdb.set_trace()
-        text_emb = tf.convert_to_tensor(text_emb.cpu())
-        features = self.model.signatures['serving_default'](inp_image_bytes=img, inp_text_emb=text_emb)
+    def forward(self, imgs, text_embedding):
+        text_embedding = text_embedding.cpu().numpy()
+        text_embedding = tf.reshape(
+            text_embedding, [-1, 1, text_embedding.shape[-1]])
+        text_embedding = tf.cast(text_embedding, tf.float32)
 
-        return features
-        logits = outputs.logits  # shape (batch_size, num_labels, height/4, width/4)
+        outputs = []
+        for img in imgs:
+            tmp_path = 'tmp.png'
+            img -= img.min()
+            img /= img.max()/255.0
+            Image.fromarray(img.cpu().numpy().astype('uint8')).save(tmp_path)
+            np_image_string = np.array([tf.gfile.GFile(tmp_path, 'rb').read()])
+            inp_img = tf.convert_to_tensor(np_image_string[0])
+            output = self.model.signatures['serving_default'](
+                inp_image_bytes=inp_img,
+                inp_text_emb=text_embedding)
+            outputs.append(output['image_embedding_feat'])
+
+        return torch.tensor(tf.concat(axis=0, values=outputs).numpy())

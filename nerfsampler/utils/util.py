@@ -75,8 +75,10 @@ def count_parameters(model):
 
 def imshow(img):
     if isinstance(img, torch.Tensor):
-        plt.imshow(rescale_noclip(
-            img.detach().cpu().squeeze().permute(1, 2, 0).numpy()))
+        im = img.detach().cpu().squeeze().permute(1, 2, 0).numpy()
+        im -= im.min()
+        im /= im.max()
+        plt.imshow(im)
     else:
         plt.imshow(img)
     plt.axis('off')

@@ -2,7 +2,7 @@ import os, pdb, torch
 import wandb
 import yaml
 
-from nerfsampler.utils import losses, util
+from nerfsampler.utils import tf_util
 from nerfsampler.utils import jobs as job_mgmt
 osp = os.path
 nn = torch.nn
@@ -15,56 +15,63 @@ from nerfsampler.networks.clip import TextEmbedder
 from nerfsampler.networks.feature_extractor import FeatureExtractor
 from nerfsampler.data.nerfacto import load_nerf_pipeline_for_scene
 
-from easydict import EasyDict
-
-import numpy as np
 import torch
-
-from tqdm import tqdm
-
-from matplotlib import pyplot as plt
-import matplotlib.patches as mpatches
-
-import numpy as np
-
 import os
-
 from PIL import Image
-from pprint import pprint
-from scipy.special import softmax
 import yaml
-
-import tensorflow.compat.v1 as tf
-import tensorflow as tf2
-import ipywidgets as widgets
 
 def run_segmenter(args={}):
     # paths = args["paths"]
     # dl_args = args["data loading"]
-    pipeline = load_nerf_pipeline_for_scene()
+    cutoff = 0.5
+    
+    pipeline = load_nerf_pipeline_for_scene(scene_id=0)
     pipeline.datamanager.setup_train()
     pipeline.datamanager.setup_eval()
-    num_images = len(pipeline.datamanager.fixed_indices_eval_dataloader)
-    rgb = []
-    # with torch.autocast('cuda'):
-    for camera_ray_bundle, batch in pipeline.datamanager.fixed_indices_eval_dataloader:
+    cams = pipeline.datamanager.eval_dataset.cameras
+    num_images = len(cams)#pipeline.datamanager.fixed_indices_eval_dataloader)
+    rgbs = []
+    world_coords = []
+    cams.rescale_output_resolution(640/256)
+    for camera_index in range(num_images): 
+        camera_ray_bundle = cams.generate_rays(camera_index).to('cuda')
+        # for camera_ray_bundle, batch in pipeline.datamanager.fixed_indices_eval_dataloader:
         outputs = pipeline.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
-        rgb.append(outputs['rgb'])
+        rgbs.append(outputs['rgb'])
+        world_coords.append(camera_ray_bundle.origins + camera_ray_bundle.directions * outputs['depth'])
+        break
+    world_coords = torch.stack(world_coords, dim=0)
     
-    class_labels = ['metallic', 'rubber']
+    class_labels = ['floating blue cube', 'floating orange cube', 'floating orange ball', 'floating teal cube']
     os.chdir(os.path.expandvars('$NFS/code/nerfsampler'))
     
-    # url = "http://images.cocodataset.org/val2017/000000039769.jpg"
-    # image = Image.open(requests.get(url, stream=True).raw)
-    feature_extractor = FeatureExtractor().cuda()
     text_embedder = TextEmbedder().cuda()
+    feature_extractor = FeatureExtractor().cuda()
     
     with torch.autocast('cuda'):
         with torch.no_grad():
-            text_embeddings = text_embedder(class_labels)
-            features = [feature_extractor(im.permute(2,0,1).cuda(), text_embeddings) for im in rgb]
+            text_embeddings = text_embedder(class_labels).T
+            pix_embeddings = feature_extractor(rgbs, text_embeddings)
+    in_range = world_coords.norm(dim=-1) < cutoff
+    output = torch.zeros_like(pix_embeddings).repeat(len(class_labels), 1, 1, 1)
+    world_coords = world_coords[in_range]
+    pix_embeddings = pix_embeddings[in_range]
+    pdb.set_trace()
+    sims = F.cosine_similarity(pix_embeddings.unsqueeze(0).cuda(),
+        text_embeddings.unsqueeze(1), dim=-1)
+    sims.clamp_min_(0) # don't bother showing negative
+    output[:, in_range] = sims.cpu() * 255
+    output = output.numpy().astype('uint8')
+    for cls in range(len(class_labels)):
+        Image.fromarray(output[cls,0]).save(f'{class_labels[cls]}.png')
+
+    
+    pix_embeddings, text_embeddings
+    return pix_embeddings
     pdb.set_trace()
     features.shape
     text_embeddings.shape
     feature_size = text_embeddings.size(2)
     return features, text_embeddings
+
+
