@@ -12,6 +12,7 @@ def load_nerf_pipeline_for_scene(scene_id=0):
     path = glob2(f'{DS_DIR}/nerfacto/{scene_id}/nerfacto/*/config.yml')[0]
     config, pipeline, checkpoint_path = eval_setup(Path(path), test_mode="inference")
     pipeline.eval()
+    os.chdir(f'{CODE_DIR}/nerfsampler')
     return pipeline
         
 
