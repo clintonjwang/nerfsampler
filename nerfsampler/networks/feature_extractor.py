@@ -11,10 +11,11 @@ import numpy as np
 class FeatureExtractor(nn.Module):
     def __init__(self) -> None:
         super().__init__()
-        self.model = tf2.saved_model.load('./models', tags=[tf.saved_model.tag_constants.SERVING],)
+        with tf.device('/cpu:0'):
+            self.model = tf2.saved_model.load('./exported_model', tags=[tf.saved_model.tag_constants.SERVING],)
         
     def forward(self, imgs, text_embedding):
-        text_embedding = text_embedding.cpu().numpy()
+        text_embedding = text_embedding.numpy()
         text_embedding = tf.reshape(
             text_embedding, [-1, 1, text_embedding.shape[-1]])
         text_embedding = tf.cast(text_embedding, tf.float32)
