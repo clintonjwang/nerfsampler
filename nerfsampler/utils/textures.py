@@ -1,7 +1,9 @@
 import pdb
 import torch
 import opensimplex
-from numba import njit, prange
+from sklearn.decomposition import PCA
+F = torch.nn.functional
+from math import sin, cos, pi
 
 from nerfstudio.cameras.rays import RaySamples
 from nerfstudio.field_components.field_heads import FieldHeadNames
@@ -57,8 +59,6 @@ def forward_proc_texture(self, coords, eps=.01):
     opensimplex.seed(324)
     def forward(ray_samples: RaySamples, compute_normals: bool = False):
         if compute_normals:
-            for point in positions:
-                rgbs.append(opensimplex.noise4(point[0], point[1], point[2], self.frame_frac))
             with torch.enable_grad():
                 density, density_embedding = self.get_density(ray_samples)
         else:
@@ -87,3 +87,34 @@ def forward_proc_texture(self, coords, eps=.01):
         return field_outputs
     return forward
 
+def forward_uv_map(self, coords, texture, eps=.01):
+    bbox = coords.min(dim=0).values-eps, coords.max(dim=0).values+eps
+    def forward(ray_samples: RaySamples, compute_normals: bool = False):
+        if compute_normals:
+            with torch.enable_grad():
+                density, density_embedding = self.get_density(ray_samples)
+        else:
+            density, density_embedding = self.get_density(ray_samples)
+
+        field_outputs = self.get_outputs(ray_samples, density_embedding=density_embedding)
+        field_outputs[FieldHeadNames.DENSITY] = density  # type: ignore
+
+        positions = ray_samples.frustums.get_positions()
+        in_range = (positions > bbox[0]).min(dim=-1).values & (positions < bbox[1]).min(dim=-1).values
+        theta = self.frame_frac
+        transform = torch.tensor([[cos(theta), -sin(theta)], [sin(theta), cos(theta)]], device=in_range.device)
+        if in_range.sum() > 0:
+            positions = positions[in_range].cpu().numpy()
+            pca = PCA(n_components=2)
+            uv_coords = torch.matmul(torch.tensor(pca.fit_transform(positions), device=in_range.device), transform)
+            uv_coords -= uv_coords.min(dim=0).values
+            uv_coords /= uv_coords.max(dim=0).values
+            rgbs = F.grid_sample((texture/255.).unsqueeze(0), uv_coords.reshape(1,1,-1,2)*2-1, align_corners=False).squeeze().T
+            field_outputs[FieldHeadNames.RGB][in_range] = rgbs
+
+        if compute_normals:
+            with torch.enable_grad():
+                normals = self.get_normals()
+            field_outputs[FieldHeadNames.NORMALS] = normals  # type: ignore
+        return field_outputs
+    return forward

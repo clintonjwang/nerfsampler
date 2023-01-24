@@ -2,6 +2,7 @@ import os, pdb, torch
 import wandb
 import yaml
 
+from torchvision.transforms.functional import pil_to_tensor
 from nerfsampler.utils import tf_util
 from nerfsampler.utils import jobs as job_mgmt
 osp = os.path
@@ -79,17 +80,13 @@ def run_segmenter(args={}):
     # render_with_seg_removed(pipeline.model, camera_ray_bundle, seg_coords)
     # pipeline = load_nerf_pipeline_for_scene(scene_id=scene_id)
     # render_with_seg_recolored(pipeline.model, camera_ray_bundle, seg_coords)
-    # pipeline = load_nerf_pipeline_for_scene(scene_id=scene_id)
     # render_with_seg_duplicated(pipeline.model, camera_ray_bundle, seg_coords)
     # render_with_affine_tx(pipeline.model, camera_ray_bundle, seg_coords)
+    # render_with_procedural_texture(pipeline.model, camera_ray_bundle, seg_coords)
 
-    render_with_procedural_texture(pipeline.model, camera_ray_bundle, seg_coords)
-    pdb.set_trace()
-
-    texture_map = Image.open('texture_map.png')
+    texture_map = pil_to_tensor(Image.open('texture_map.jpeg')).cuda()
     render_with_texture_map(pipeline.model, camera_ray_bundle, seg_coords, texture_map)
     
-    return seg
 
 def render_with_procedural_texture(nerfacto, camera_ray_bundle, coords):
     nerfacto.field.forward = forward_proc_texture(nerfacto.field, coords=coords)
@@ -101,14 +98,15 @@ def render_with_procedural_texture(nerfacto, camera_ray_bundle, coords):
         rgb = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb'] #ray_bundles[ix])['rgb']
         Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save(f'{folder}/{ix:02d}.png')
 
-def render_with_texture_map(nerfacto, camera_ray_bundle, object_coords):
-    nerfacto.field.forward = forward_texture_map(nerfacto.field, recolored_coords=recolored_coords)
-    os.makedirs('results/recolor', exist_ok=True)
-    n_frames = len(ray_bundles)
+def render_with_texture_map(nerfacto, camera_ray_bundle, coords, texture_map):
+    nerfacto.field.forward = forward_uv_map(nerfacto.field, coords=coords, texture=texture_map)
+    folder = 'results/texture_map'
+    os.makedirs(folder, exist_ok=True)
+    n_frames = 32 #len(ray_bundles)
     for ix in range(n_frames):
         nerfacto.field.frame_frac = ix / n_frames
-        rgb = nerfacto.get_outputs_for_camera_ray_bundle(ray_bundles[ix])['rgb']
-        Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save(f'results/recolor/{ix:02d}.png')
+        rgb = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb'] #ray_bundles[ix])['rgb']
+        Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save(f'{folder}/{ix:02d}.png')
 
 
 def render_with_seg_recolored(nerfacto, ray_bundles, recolored_coords):
