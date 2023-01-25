@@ -59,11 +59,29 @@ def run_segmenter(args={}):
         seg = torch.max(sims, dim=0).indices
         all_segs.append(seg)
     
+    folder = 'results/original'
+    os.makedirs(folder, exist_ok=True)
+
+    save_rgb = False
+    if save_rgb:
+        n_frames = 64
+        orig = torch.clone(camera_ray_bundle.origins)
+        dirs = torch.clone(camera_ray_bundle.directions)
+        for ix in range(n_frames):
+            t = ix / n_frames * 2 * pi
+            R = torch.tensor([[cos(t), -sin(t), 0], [sin(t), cos(t), 0], [0, 0, 1]], device='cuda')
+            camera_ray_bundle.origins = torch.matmul(orig, R)
+            camera_ray_bundle.directions = torch.matmul(dirs, R)
+            
+            rgb = pipeline.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb']
+            Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save(f'{folder}/{ix:02d}.png')
+        return
+
     save_segs = False
     if save_segs:
         rgb = outputs['rgb']
         Image.fromarray(rgb.cpu().numpy().astype('uint8')).save('results/rgb.png')
-
+        
         os.makedirs('results/sing_view_segs', exist_ok=True)
         seg = torch.zeros(1,640,640, dtype=torch.long) - 1
         seg[in_range] = torch.max(sims, dim=0).indices
@@ -76,54 +94,90 @@ def run_segmenter(args={}):
     seg_coords = all_coords[all_segs == 1]
     seg_coords = point_cloud.select_largest_subset(seg_coords)
     del all_coords, all_segs, seg, rgb, pix_embeddings, text_embeddings, sims, outputs
-    
-    # render_with_seg_removed(pipeline.model, camera_ray_bundle, seg_coords)
+
+    print('Starting render')
+    render_with_seg_removed(pipeline.model, camera_ray_bundle, seg_coords)
     # pipeline = load_nerf_pipeline_for_scene(scene_id=scene_id)
     # render_with_seg_recolored(pipeline.model, camera_ray_bundle, seg_coords)
     # render_with_seg_duplicated(pipeline.model, camera_ray_bundle, seg_coords)
     # render_with_affine_tx(pipeline.model, camera_ray_bundle, seg_coords)
     # render_with_procedural_texture(pipeline.model, camera_ray_bundle, seg_coords)
 
-    texture_map = pil_to_tensor(Image.open('texture_map.jpeg')).cuda()
-    render_with_texture_map(pipeline.model, camera_ray_bundle, seg_coords, texture_map)
+    # texture_map = pil_to_tensor(Image.open('texture_map.jpeg')).cuda()
+    # render_with_texture_map(pipeline.model, camera_ray_bundle, seg_coords, texture_map)
     
 
 def render_with_procedural_texture(nerfacto, camera_ray_bundle, coords):
     nerfacto.field.forward = forward_proc_texture(nerfacto.field, coords=coords)
     folder = 'results/proc_tex'
     os.makedirs(folder, exist_ok=True)
-    n_frames = 32 #len(ray_bundles)
+    
+    n_frames = 64
+    orig = torch.clone(camera_ray_bundle.origins)
+    dirs = torch.clone(camera_ray_bundle.directions)
     for ix in range(n_frames):
-        nerfacto.field.frame_frac = ix / n_frames
-        rgb = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb'] #ray_bundles[ix])['rgb']
+        nerfacto.field.t = t = ix / n_frames * 2 * pi
+        R = torch.tensor([[cos(t), -sin(t), 0], [sin(t), cos(t), 0], [0, 0, 1]], device='cuda')
+        camera_ray_bundle.origins = torch.matmul(orig, R)
+        camera_ray_bundle.directions = torch.matmul(dirs, R)
+        
+        rgb = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb']
         Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save(f'{folder}/{ix:02d}.png')
 
 def render_with_texture_map(nerfacto, camera_ray_bundle, coords, texture_map):
     nerfacto.field.forward = forward_uv_map(nerfacto.field, coords=coords, texture=texture_map)
     folder = 'results/texture_map'
     os.makedirs(folder, exist_ok=True)
-    n_frames = 32 #len(ray_bundles)
+
+    n_frames = 64
+    orig = torch.clone(camera_ray_bundle.origins)
+    dirs = torch.clone(camera_ray_bundle.directions)
     for ix in range(n_frames):
-        nerfacto.field.frame_frac = ix / n_frames
-        rgb = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb'] #ray_bundles[ix])['rgb']
+        nerfacto.field.t = t = ix / n_frames * 2 * pi
+        R = torch.tensor([[cos(t), -sin(t), 0], [sin(t), cos(t), 0], [0, 0, 1]], device='cuda')
+        camera_ray_bundle.origins = torch.matmul(orig, R)
+        camera_ray_bundle.directions = torch.matmul(dirs, R)
+        
+        rgb = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb']
         Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save(f'{folder}/{ix:02d}.png')
 
 
-def render_with_seg_recolored(nerfacto, ray_bundles, recolored_coords):
+def render_with_seg_recolored(nerfacto, camera_ray_bundle, recolored_coords):
     nerfacto.field.forward = forward_recolor(nerfacto.field, recolored_coords=recolored_coords)
-    os.makedirs('results/recolor', exist_ok=True)
-    n_frames = len(ray_bundles)
+    folder = 'results/recolor'
+    os.makedirs(folder, exist_ok=True)
+
+    n_frames = 64
+    orig = torch.clone(camera_ray_bundle.origins)
+    dirs = torch.clone(camera_ray_bundle.directions)
     for ix in range(n_frames):
+        t = ix / n_frames * 2 * pi
+        R = torch.tensor([[cos(t), -sin(t), 0], [sin(t), cos(t), 0], [0, 0, 1]], device='cuda')
+        camera_ray_bundle.origins = torch.matmul(orig, R)
+        camera_ray_bundle.directions = torch.matmul(dirs, R)
+        
         nerfacto.field.frame_frac = ix / n_frames
-        rgb = nerfacto.get_outputs_for_camera_ray_bundle(ray_bundles[ix])['rgb']
-        Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save(f'results/recolor/{ix:02d}.png')
+        rgb = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb']
+        Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save(f'{folder}/{ix:02d}.png')
 
 def render_with_seg_removed(nerfacto, camera_ray_bundle, removed_coords):
     for ix in range(len(nerfacto.density_fns)):
         nerfacto.density_fns[ix] = remove_density_fxn(nerfacto.density_fns[ix], removed_coords=removed_coords)
     nerfacto.field.get_density = remove_field_density(nerfacto.field, removed_coords=removed_coords)
-    rgb = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb']
-    Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save('results/deletion.png')
+    folder = 'results/deletion'
+    os.makedirs(folder, exist_ok=True)
+
+    n_frames = 64
+    orig = torch.clone(camera_ray_bundle.origins)
+    dirs = torch.clone(camera_ray_bundle.directions)
+    for ix in range(n_frames):
+        t = ix / n_frames * 2 * pi
+        R = torch.tensor([[cos(t), -sin(t), 0], [sin(t), cos(t), 0], [0, 0, 1]], device='cuda')
+        camera_ray_bundle.origins = torch.matmul(orig, R)
+        camera_ray_bundle.directions = torch.matmul(dirs, R)
+        
+        rgb = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb']
+        Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save(f'{folder}/{ix:02d}.png')
 
 def render_with_seg_duplicated(nerfacto, camera_ray_bundle, orig_coords):
     theta = .5
@@ -132,25 +186,44 @@ def render_with_seg_duplicated(nerfacto, camera_ray_bundle, orig_coords):
         nerfacto.density_fns[ix] = duplicate_density_fxn(nerfacto.density_fns[ix], orig_coords, transform)
     nerfacto.field.get_density = duplicate_field_density(nerfacto.field, orig_coords, transform)
     nerfacto.field.get_outputs = duplicate_rgb(nerfacto.field, orig_coords, transform)
-    rgb = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb']
-    Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save('results/duplicate.png')
+    folder = 'results/duplicate'
+    os.makedirs(folder, exist_ok=True)
 
-def render_with_affine_tx(nerfacto, camera_ray_bundle, target_coords):
     n_frames = 64
+    orig = torch.clone(camera_ray_bundle.origins)
+    dirs = torch.clone(camera_ray_bundle.directions)
     for ix in range(n_frames):
         t = ix / n_frames * 2 * pi
         R = torch.tensor([[cos(t), -sin(t), 0], [sin(t), cos(t), 0], [0, 0, 1]], device='cuda')
-        scale = torch.tensor([[1+t/5, 0, 0], [0, 1+t/5, 0], [0, 0, 1+t/2.5]], device='cuda')
-        transform = torch.cat((torch.mm(R, scale), torch.tensor([0,0,-cos(t)/2], device='cuda')))
-    pdb.set_trace()
-    bbox = target_coords.min(dim=0).values, target_coords.max(dim=0).values
-    nerfacto.field.get_density = move_density_fxn(nerfacto.field, target_coords=target_coords, scale=scale, shift=shift, angles=angles)
-    transform = torch.eye(4)
-    transform[:3,:3] *= scale
-    transform[:3,3] += shift
-    
-    if scale > 1:
-        new_bbox = modified_coords.min(dim=0).values * scale + shift, modified_coords.max(dim=0).values * scale + shift
+        camera_ray_bundle.origins = torch.matmul(orig, R)
+        camera_ray_bundle.directions = torch.matmul(dirs, R)
+        rgb = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb']
+        Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save(f'{folder}/{ix:02d}.png')
+
+def render_with_affine_tx(nerfacto, camera_ray_bundle, orig_coords):
+    for ix in range(len(nerfacto.density_fns)):
+        nerfacto.density_fns[ix] = animate_density_fxn(nerfacto.field, nerfacto.density_fns[ix], orig_coords)
+    nerfacto.field.get_density = animate_field_density(nerfacto.field, orig_coords)
+    nerfacto.field.get_outputs = animate_rgb(nerfacto.field, orig_coords)
+    folder = 'results/animate'
+    os.makedirs(folder, exist_ok=True)
+
+    n_frames = 64
+    orig = torch.clone(camera_ray_bundle.origins)
+    dirs = torch.clone(camera_ray_bundle.directions)
+    for ix in range(n_frames):
+        t = ix / n_frames * 2 * pi
+        R = torch.tensor([[cos(t), -sin(t), 0], [sin(t), cos(t), 0], [0, 0, 1]], device='cuda')
+        camera_ray_bundle.origins = torch.matmul(orig, R)
+        camera_ray_bundle.directions = torch.matmul(dirs, R)
+        
+        R = torch.tensor([[cos(2*t), -sin(2*t), 0], [sin(2*t), cos(2*t), 0], [0, 0, 1]], device='cuda')
+        scale = torch.tensor([[1-sin(t)*.4, 0, 0], [0, 1+sin(t)*.4, 0], [0, 0, 1-cos(t)*.4]], device='cuda')
+        nerfacto.field.animation_transform = torch.cat((torch.mm(R, scale), torch.tensor([0,0,cos(t)*.07], device='cuda').unsqueeze(1)), dim=1)
+        nerfacto.field.inv_tx = torch.inverse(nerfacto.field.animation_transform[:,:3])
+        rgb = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb']
+        Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save(f'{folder}/{ix:02d}.png')
+
 
 def vis_seg(sims, in_range, class_labels, pix_embeddings):
     seg = torch.zeros(len(class_labels), *pix_embeddings.shape[:3], dtype=torch.long) - 1

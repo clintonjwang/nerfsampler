@@ -34,15 +34,15 @@ def forward_recolor(self, recolored_coords, eps=.01):
         rgb = field_outputs[FieldHeadNames.RGB]
         if self.frame_frac < 1/3:
             alpha = self.frame_frac * 3
-            new_rgb = rgb * (1-alpha) + torch.stack((rgb[...,2], rgb[...,0], rgb[...,1]), dim=-1) * alpha
-        elif self.frame_frac < 2/3:
-            alpha = self.frame_frac * 3 - 1
-            new_rgb = torch.stack((rgb[...,2], rgb[...,0], rgb[...,1]), dim=-1) * (1-alpha) + \
-                    torch.stack((rgb[...,1], rgb[...,2], rgb[...,0]), dim=-1) * alpha
-        else:
-            alpha = self.frame_frac * 3 - 2
             new_rgb = torch.stack((rgb[...,1], rgb[...,2], rgb[...,0]), dim=-1) * (1-alpha) + \
                     rgb * alpha
+        elif self.frame_frac < 2/3:
+            alpha = self.frame_frac * 3 - 1
+            new_rgb = rgb * (1-alpha) + torch.stack((rgb[...,2], rgb[...,0], rgb[...,1]), dim=-1) * alpha
+        else:
+            alpha = self.frame_frac * 3 - 2
+            new_rgb = torch.stack((rgb[...,2], rgb[...,0], rgb[...,1]), dim=-1) * (1-alpha) + \
+                    torch.stack((rgb[...,1], rgb[...,2], rgb[...,0]), dim=-1) * alpha
         field_outputs[FieldHeadNames.RGB] = torch.where(in_range.unsqueeze(-1), new_rgb, rgb)
         field_outputs[FieldHeadNames.DENSITY] = density  # type: ignore
 
@@ -71,9 +71,9 @@ def forward_proc_texture(self, coords, eps=.01):
         in_range = (positions > bbox[0]).min(dim=-1).values & (positions < bbox[1]).min(dim=-1).values
         if in_range.sum() > 0:
             positions = positions[in_range].cpu().numpy()
-            R = noise4a(positions*50, self.frame_frac*3)
-            G = noise4a(positions*37, self.frame_frac*6)
-            B = noise4a(positions*18, self.frame_frac*7)
+            R = noise4a(positions*51, sin(self.t)*6)
+            G = noise4a(positions*37, cos(self.t)*5)
+            B = noise4a(positions*18, sin(self.t)*3)
             rgbs = torch.cat((
                 torch.tensor(R, device=density.device).unsqueeze(-1)-.1,
                 torch.tensor(G, device=density.device).unsqueeze(-1)-.1,
@@ -101,12 +101,12 @@ def forward_uv_map(self, coords, texture, eps=.01):
 
         positions = ray_samples.frustums.get_positions()
         in_range = (positions > bbox[0]).min(dim=-1).values & (positions < bbox[1]).min(dim=-1).values
-        theta = self.frame_frac
-        transform = torch.tensor([[cos(theta), -sin(theta)], [sin(theta), cos(theta)]], device=in_range.device)
+        R = torch.tensor([[cos(self.t), -sin(self.t)],
+            [sin(self.t), cos(self.t)]], device=in_range.device)
         if in_range.sum() > 0:
             positions = positions[in_range].cpu().numpy()
             pca = PCA(n_components=2)
-            uv_coords = torch.matmul(torch.tensor(pca.fit_transform(positions), device=in_range.device), transform)
+            uv_coords = torch.matmul(torch.tensor(pca.fit_transform(positions), device=in_range.device), R)
             uv_coords -= uv_coords.min(dim=0).values
             uv_coords /= uv_coords.max(dim=0).values
             rgbs = F.grid_sample((texture/255.).unsqueeze(0), uv_coords.reshape(1,1,-1,2)*2-1, align_corners=False).squeeze().T
