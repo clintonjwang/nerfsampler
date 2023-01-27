@@ -21,27 +21,65 @@ import torch
 import os
 from PIL import Image
 import yaml
+torch.backends.cudnn.benchmark = True
+
+def animate_camera(camera_ray_bundle, reference, frac):
+    t = frac * 2 * pi
+    R = torch.tensor([[cos(t), -sin(t), 0], [sin(t), cos(t), 0], [0, 0, 1]], device='cuda')
+    camera_ray_bundle.origins = torch.matmul(reference[0], R)
+    camera_ray_bundle.directions = torch.matmul(reference[1], R)
 
 def run_segmenter(args={}):
     # paths = args["paths"]
-    # dl_args = args["data loading"]
-    cutoff = 0.75
-    scene_id = 2
+    dl_args = args["data"]
+    scene_id = dl_args['scene_id']
+    cutoff = args['seg_radius_cutoff']
+    native_res = args['native_res']
+    class_labels = args['class_labels']
     
     pipeline = load_nerf_pipeline_for_scene(scene_id=scene_id)
     pipeline.datamanager.setup_train()
     pipeline.datamanager.setup_eval()
     cams = pipeline.datamanager.eval_dataset.cameras
-    num_images = len(cams)#pipeline.datamanager.fixed_indices_eval_dataloader)
 
-    class_labels = ['a golden cube', 'a yellow hoop', 'a green cube', 'a brown cube', 'a purple cube', 'a purple cylinder', 'a gray ball', 'a gray floor']
     text_embeddings = TextEmbedder().cuda()(class_labels).T.cpu()
     feature_extractor = FeatureExtractor()
     
     all_coords = []
     all_segs = []
-    cams.rescale_output_resolution(640/256)
-    for camera_index in [1,2,3,0]:#range(4):#range(num_images):
+    cams.rescale_output_resolution(640/native_res)
+
+    if args['task'] == 'render 2D segmentations':
+        camera_ray_bundle = cams.generate_rays(0).to(pipeline.model.device)
+        for label in class_labels:
+            os.makedirs(f'results/segs/{label}', exist_ok=True)
+
+        n_frames = 64
+        orig = torch.clone(camera_ray_bundle.origins)
+        dirs = torch.clone(camera_ray_bundle.directions)
+        for frame in range(n_frames):
+            animate_camera(camera_ray_bundle, (orig, dirs), frac=ix/n_frames)
+            outputs = pipeline.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
+            rgb = outputs['rgb']
+            
+            with torch.no_grad():
+                pix_embeddings = feature_extractor([rgb], text_embeddings)
+
+            world_coords = (camera_ray_bundle.origins + camera_ray_bundle.directions * outputs['depth']).unsqueeze(0)
+            in_range = world_coords.norm(dim=-1) < cutoff
+            pix_embeddings = pix_embeddings[in_range]
+            sims = F.cosine_similarity(pix_embeddings.unsqueeze(0),
+                text_embeddings.unsqueeze(1), dim=-1)
+            
+            seg = torch.zeros(1,640,640, dtype=torch.long) - 1
+            seg[in_range] = torch.max(sims, dim=0).indices
+            seg.squeeze_(0)
+            for i in range(len(class_labels)):
+                Image.fromarray(((seg == i)*255).cpu().numpy().astype('uint8')).save(f'results/segs/{class_labels[i]}/{frame:03d}.png')
+            
+        return
+
+    for camera_index in range(len(args['num_views'])):
         camera_ray_bundle = cams.generate_rays(camera_index).to(pipeline.model.device)
         outputs = pipeline.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
         rgb = outputs['rgb']
@@ -62,32 +100,16 @@ def run_segmenter(args={}):
     folder = 'results/original'
     os.makedirs(folder, exist_ok=True)
 
-    save_rgb = False
-    if save_rgb:
+    if args['task'] == 'render original scene':
         n_frames = 64
         orig = torch.clone(camera_ray_bundle.origins)
         dirs = torch.clone(camera_ray_bundle.directions)
         for ix in range(n_frames):
-            t = ix / n_frames * 2 * pi
-            R = torch.tensor([[cos(t), -sin(t), 0], [sin(t), cos(t), 0], [0, 0, 1]], device='cuda')
-            camera_ray_bundle.origins = torch.matmul(orig, R)
-            camera_ray_bundle.directions = torch.matmul(dirs, R)
+            animate_camera(camera_ray_bundle, (orig, dirs), frac=ix/n_frames)
             
             rgb = pipeline.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb']
             Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save(f'{folder}/{ix:02d}.png')
         return
-
-    save_segs = False
-    if save_segs:
-        rgb = outputs['rgb']
-        Image.fromarray(rgb.cpu().numpy().astype('uint8')).save('results/rgb.png')
-        
-        os.makedirs('results/sing_view_segs', exist_ok=True)
-        seg = torch.zeros(1,640,640, dtype=torch.long) - 1
-        seg[in_range] = torch.max(sims, dim=0).indices
-        seg.squeeze_(0)
-        for i in range(len(class_labels)):
-            Image.fromarray(((seg == i)*255).cpu().numpy().astype('uint8')).save(f'results/sing_view_segs/{class_labels[i]}.png')
 
     all_coords = torch.cat(all_coords)
     all_segs = torch.cat(all_segs)
@@ -97,14 +119,14 @@ def run_segmenter(args={}):
 
     print('Starting render')
     render_with_seg_removed(pipeline.model, camera_ray_bundle, seg_coords)
-    # pipeline = load_nerf_pipeline_for_scene(scene_id=scene_id)
-    # render_with_seg_recolored(pipeline.model, camera_ray_bundle, seg_coords)
-    # render_with_seg_duplicated(pipeline.model, camera_ray_bundle, seg_coords)
-    # render_with_affine_tx(pipeline.model, camera_ray_bundle, seg_coords)
-    # render_with_procedural_texture(pipeline.model, camera_ray_bundle, seg_coords)
+    pipeline = load_nerf_pipeline_for_scene(scene_id=scene_id)
+    render_with_seg_recolored(pipeline.model, camera_ray_bundle, seg_coords)
+    render_with_seg_duplicated(pipeline.model, camera_ray_bundle, seg_coords)
+    render_with_affine_tx(pipeline.model, camera_ray_bundle, seg_coords)
+    render_with_procedural_texture(pipeline.model, camera_ray_bundle, seg_coords)
 
-    # texture_map = pil_to_tensor(Image.open('texture_map.jpeg')).cuda()
-    # render_with_texture_map(pipeline.model, camera_ray_bundle, seg_coords, texture_map)
+    texture_map = pil_to_tensor(Image.open('texture_map.jpeg')).cuda()
+    render_with_texture_map(pipeline.model, camera_ray_bundle, seg_coords, texture_map)
     
 
 def render_with_procedural_texture(nerfacto, camera_ray_bundle, coords):
@@ -116,11 +138,9 @@ def render_with_procedural_texture(nerfacto, camera_ray_bundle, coords):
     orig = torch.clone(camera_ray_bundle.origins)
     dirs = torch.clone(camera_ray_bundle.directions)
     for ix in range(n_frames):
-        nerfacto.field.t = t = ix / n_frames * 2 * pi
-        R = torch.tensor([[cos(t), -sin(t), 0], [sin(t), cos(t), 0], [0, 0, 1]], device='cuda')
-        camera_ray_bundle.origins = torch.matmul(orig, R)
-        camera_ray_bundle.directions = torch.matmul(dirs, R)
+        animate_camera(camera_ray_bundle, (orig, dirs), frac=ix/n_frames)
         
+        nerfacto.field.t = ix / n_frames * 2 * pi
         rgb = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb']
         Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save(f'{folder}/{ix:02d}.png')
 
@@ -133,11 +153,9 @@ def render_with_texture_map(nerfacto, camera_ray_bundle, coords, texture_map):
     orig = torch.clone(camera_ray_bundle.origins)
     dirs = torch.clone(camera_ray_bundle.directions)
     for ix in range(n_frames):
-        nerfacto.field.t = t = ix / n_frames * 2 * pi
-        R = torch.tensor([[cos(t), -sin(t), 0], [sin(t), cos(t), 0], [0, 0, 1]], device='cuda')
-        camera_ray_bundle.origins = torch.matmul(orig, R)
-        camera_ray_bundle.directions = torch.matmul(dirs, R)
+        animate_camera(camera_ray_bundle, (orig, dirs), frac=ix/n_frames)
         
+        nerfacto.field.t = ix / n_frames * 2 * pi
         rgb = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb']
         Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save(f'{folder}/{ix:02d}.png')
 
@@ -151,19 +169,16 @@ def render_with_seg_recolored(nerfacto, camera_ray_bundle, recolored_coords):
     orig = torch.clone(camera_ray_bundle.origins)
     dirs = torch.clone(camera_ray_bundle.directions)
     for ix in range(n_frames):
-        t = ix / n_frames * 2 * pi
-        R = torch.tensor([[cos(t), -sin(t), 0], [sin(t), cos(t), 0], [0, 0, 1]], device='cuda')
-        camera_ray_bundle.origins = torch.matmul(orig, R)
-        camera_ray_bundle.directions = torch.matmul(dirs, R)
+        animate_camera(camera_ray_bundle, (orig, dirs), frac=ix/n_frames)
         
-        nerfacto.field.frame_frac = ix / n_frames
+        nerfacto.field.frame_frac = ix/n_frames
         rgb = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb']
         Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save(f'{folder}/{ix:02d}.png')
 
-def render_with_seg_removed(nerfacto, camera_ray_bundle, removed_coords):
+def render_with_seg_removed(nerfacto, camera_ray_bundle, coords):
     for ix in range(len(nerfacto.density_fns)):
-        nerfacto.density_fns[ix] = remove_density_fxn(nerfacto.density_fns[ix], removed_coords=removed_coords)
-    nerfacto.field.get_density = remove_field_density(nerfacto.field, removed_coords=removed_coords)
+        nerfacto.density_fns[ix] = attenuate_density_fxn(nerfacto.density_fns[ix], coords)
+    nerfacto.field.get_density = attenuate_field_density(nerfacto.field, coords)
     folder = 'results/deletion'
     os.makedirs(folder, exist_ok=True)
 
@@ -171,10 +186,7 @@ def render_with_seg_removed(nerfacto, camera_ray_bundle, removed_coords):
     orig = torch.clone(camera_ray_bundle.origins)
     dirs = torch.clone(camera_ray_bundle.directions)
     for ix in range(n_frames):
-        t = ix / n_frames * 2 * pi
-        R = torch.tensor([[cos(t), -sin(t), 0], [sin(t), cos(t), 0], [0, 0, 1]], device='cuda')
-        camera_ray_bundle.origins = torch.matmul(orig, R)
-        camera_ray_bundle.directions = torch.matmul(dirs, R)
+        animate_camera(camera_ray_bundle, (orig, dirs), frac=ix/n_frames)
         
         rgb = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb']
         Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save(f'{folder}/{ix:02d}.png')
@@ -193,10 +205,25 @@ def render_with_seg_duplicated(nerfacto, camera_ray_bundle, orig_coords):
     orig = torch.clone(camera_ray_bundle.origins)
     dirs = torch.clone(camera_ray_bundle.directions)
     for ix in range(n_frames):
-        t = ix / n_frames * 2 * pi
-        R = torch.tensor([[cos(t), -sin(t), 0], [sin(t), cos(t), 0], [0, 0, 1]], device='cuda')
-        camera_ray_bundle.origins = torch.matmul(orig, R)
-        camera_ray_bundle.directions = torch.matmul(dirs, R)
+        animate_camera(camera_ray_bundle, (orig, dirs), frac=ix/n_frames)
+
+        rgb = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb']
+        Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save(f'{folder}/{ix:02d}.png')
+
+def render_reflective_material(nerfacto, camera_ray_bundle, coords):
+    for ix in range(len(nerfacto.density_fns)):
+        nerfacto.density_fns[ix] = attenuate_density_fxn(nerfacto.density_fns[ix], scale=0.1, coords=coords)
+    nerfacto.field.get_density = attenuate_field_density(nerfacto.field, scale=0.1, coords=coords)
+    nerfacto.field.get_outputs = reflect_rgb(nerfacto.field, coords)
+    folder = 'results/reflection'
+    os.makedirs(folder, exist_ok=True)
+
+    n_frames = 64
+    orig = torch.clone(camera_ray_bundle.origins)
+    dirs = torch.clone(camera_ray_bundle.directions)
+    for ix in range(n_frames):
+        animate_camera(camera_ray_bundle, (orig, dirs), frac=ix/n_frames)
+        
         rgb = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb']
         Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save(f'{folder}/{ix:02d}.png')
 
@@ -212,11 +239,9 @@ def render_with_affine_tx(nerfacto, camera_ray_bundle, orig_coords):
     orig = torch.clone(camera_ray_bundle.origins)
     dirs = torch.clone(camera_ray_bundle.directions)
     for ix in range(n_frames):
-        t = ix / n_frames * 2 * pi
-        R = torch.tensor([[cos(t), -sin(t), 0], [sin(t), cos(t), 0], [0, 0, 1]], device='cuda')
-        camera_ray_bundle.origins = torch.matmul(orig, R)
-        camera_ray_bundle.directions = torch.matmul(dirs, R)
+        animate_camera(camera_ray_bundle, (orig, dirs), frac=ix/n_frames)
         
+        t = ix/n_frames * 2 * pi
         R = torch.tensor([[cos(2*t), -sin(2*t), 0], [sin(2*t), cos(2*t), 0], [0, 0, 1]], device='cuda')
         scale = torch.tensor([[1-sin(t)*.4, 0, 0], [0, 1+sin(t)*.4, 0], [0, 0, 1-cos(t)*.4]], device='cuda')
         nerfacto.field.animation_transform = torch.cat((torch.mm(R, scale), torch.tensor([0,0,cos(t)*.07], device='cuda').unsqueeze(1)), dim=1)
@@ -226,6 +251,13 @@ def render_with_affine_tx(nerfacto, camera_ray_bundle, orig_coords):
 
 
 def vis_seg(sims, in_range, class_labels, pix_embeddings):
+    # os.makedirs('results/sing_view_segs', exist_ok=True)
+    # seg = torch.zeros(1,640,640, dtype=torch.long) - 1
+    # seg[in_range] = torch.max(sims, dim=0).indices
+    # seg.squeeze_(0)
+    # for i in range(len(class_labels)):
+    #     Image.fromarray(((seg == i)*255).cpu().numpy().astype('uint8')).save(f'results/sing_view_segs/{class_labels[i]}.png')
+    
     seg = torch.zeros(len(class_labels), *pix_embeddings.shape[:3], dtype=torch.long) - 1
     sims.clamp_min_(0) # don't bother showing negative
     seg[:, in_range] = sims * 255

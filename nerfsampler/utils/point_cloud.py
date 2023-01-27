@@ -5,8 +5,19 @@ from sklearn.cluster import AgglomerativeClustering
 from sklearn.neighbors import kneighbors_graph
 from scipy.sparse import csgraph
 
-def select_largest_subset(points):
-    # points (N,3)
+def torch_to_o3d(points: torch.Tensor):
+    pcd = o3d.PointCloud()
+    pcd.points = o3d.Vector3dVector(points.cpu().numpy())
+    return pcd
+
+def downsample_pcd(points: torch.Tensor):
+    pcd = torch_to_o3d(points)
+    pcd, indices = pcd.voxel_down_sample_and_trace(voxel_size=0.02)
+    return torch.tensor(np.asarray(pcd.points),
+            device=points.device, dtype=points.dtype), indices
+    
+def select_largest_subset(points: torch.Tensor):
+    # points (N,3) tensor
     p_npy = points.cpu().numpy()
     adj = kneighbors_graph(p_npy, 30, include_self=False)
     n_components, labels = csgraph.connected_components(adj)
@@ -26,10 +37,3 @@ def refine_labels(points, init_labels):
     mask = labels == ix
     pdb.set_trace()
     return points[torch.tensor(mask, device=points.device)]
-
-def downsample(points):
-    pcd = o3d.PointCloud()
-    pcd.points = o3d.Vector3dVector(points.cpu().numpy())
-    pcd, indices = pcd.voxel_down_sample_and_trace(voxel_size=0.02)
-    return torch.tensor(np.asarray(pcd.points),
-            device=points.device, dtype=points.dtype), indices

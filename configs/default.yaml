@@ -1,18 +1,4 @@
 random seed: 0
 paths:
-  slurm output dir: $NFS/code/inrnet/results
-  temp dir: $NFS/code/inrnet/temp
-network:
-  frozen: false
-  conv: {}
-  output NF parameterization: MLPField
-optimizer:
-  type: AdamW
-  weight decay: 1e-3
-data loading:
-  domain:
-    type: orthotope
-    dims:
-    - 2
-    - 2
-    - 2
+  slurm output dir: $NFS/code/nerfsampler/results
+  temp dir: $NFS/code/nerfsampler/temp

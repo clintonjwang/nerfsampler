@@ -78,7 +78,7 @@ def duplicate_field_density(self, orig_coords, transform, eps=.01):
             positions = (positions + 2.0) / 4.0
         else:
             raise NotImplementedError
-            
+
         self._sample_locations = positions
         if not self._sample_locations.requires_grad:
             self._sample_locations.requires_grad = True
@@ -91,8 +91,8 @@ def duplicate_field_density(self, orig_coords, transform, eps=.01):
         return density, base_mlp_out
     return get_density
 
-def remove_field_density(self, removed_coords, eps=.01):
-    bbox = removed_coords.min(dim=0).values-eps, removed_coords.max(dim=0).values+eps
+def attenuate_field_density(self, coords, scale=0., eps=.01):
+    bbox = coords.min(dim=0).values-eps, coords.max(dim=0).values+eps
     def get_density(ray_samples: RaySamples):
         if self.spatial_distortion is not None:
             positions = ray_samples.frustums.get_positions()
@@ -110,16 +110,19 @@ def remove_field_density(self, removed_coords, eps=.01):
         self._density_before_activation = density_before_activation
 
         density = trunc_exp(density_before_activation.to(positions))
-        return torch.where(in_range.unsqueeze(-1), 0, density), base_mlp_out
+        density[in_range] *= scale
+        return density, base_mlp_out
     return get_density
 
-def remove_density_fxn(orig_fxn, removed_coords, eps=.01):
-    bbox = removed_coords.min(dim=0).values-eps, removed_coords.max(dim=0).values+eps
+def attenuate_density_fxn(orig_fxn, coords, scale=0., eps=.01):
+    bbox = coords.min(dim=0).values-eps, coords.max(dim=0).values+eps
     def new_fxn(positions: TensorType["bs":..., 3]) -> TensorType["bs":..., 1]:
         in_range = (positions > bbox[0]).min(dim=-1).values & (positions < bbox[1]).min(dim=-1).values
-        # diffs = (removed_coords.view(1,1,-1,3) - positions.unsqueeze(-2))
+        # diffs = (coords.view(1,1,-1,3) - positions.unsqueeze(-2))
         # in_range = diffs.norm(dim=-1).min(dim=2) < threshold
-        return torch.where(in_range.unsqueeze(-1), 0, orig_fxn(positions))
+        out = orig_fxn(positions)
+        out[in_range] *= scale
+        return out
     return new_fxn
 
 def animate_density_fxn(field, orig_fxn, orig_coords, eps=.01):
@@ -201,6 +204,51 @@ def animate_rgb(self, orig_coords, eps=.01):
             )
         if self.use_semantics or self.use_pred_normals:
             raise NotImplementedError
+        h = torch.cat(
+            [
+                d,
+                density_embedding.view(-1, self.geo_feat_dim),
+                embedded_appearance.view(-1, self.appearance_embedding_dim),
+            ],
+            dim=-1,
+        )
+        rgb = self.mlp_head(h).view(*outputs_shape, -1).to(directions)
+        outputs.update({FieldHeadNames.RGB: rgb})
+
+        return outputs
+    return get_outputs
+
+
+def reflect_rgb(self, coords, eps=.01):
+    bbox = coords.min(dim=0).values-eps, coords.max(dim=0).values+eps
+    def get_outputs(ray_samples: RaySamples, density_embedding: TensorType):
+        # predicted normals
+        positions = ray_samples.frustums.get_positions()
+        in_range = (positions > bbox[0]).min(dim=-1).values & (positions < bbox[1]).min(dim=-1).values
+        
+        positions_flat = self.position_encoding(positions.view(-1, 3))
+        pred_normals_inp = torch.cat([positions_flat, density_embedding.view(-1, self.geo_feat_dim)], dim=-1)
+        x = self.mlp_pred_normals(pred_normals_inp).view(*outputs_shape, -1).to(directions)
+        N = self.field_head_pred_normals(x)
+        V = ray_samples.frustums.directions
+        R = V - 2 * (V * N).sum(dim=-1, keepdim=True) * N
+
+        outputs = {}
+        directions = (ray_samples.frustums.directions + 1)/2
+        directions_flat = directions.view(-1, 3)
+        d = self.direction_encoding(directions_flat)
+
+        outputs_shape = ray_samples.frustums.directions.shape[:-1]
+
+        if self.use_average_appearance_embedding:
+            embedded_appearance = torch.ones(
+                (*directions.shape[:-1], self.appearance_embedding_dim), device=directions.device
+            ) * self.embedding_appearance.mean(dim=0)
+        else:
+            embedded_appearance = torch.zeros(
+                (*directions.shape[:-1], self.appearance_embedding_dim), device=directions.device
+            )
+
         h = torch.cat(
             [
                 d,

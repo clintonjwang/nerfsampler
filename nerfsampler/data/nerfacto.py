@@ -7,6 +7,9 @@ from nerfsampler import CODE_DIR, DS_DIR
 from nerfsampler.utils.util import glob2
 from nerfstudio.utils.eval_utils import eval_setup
 
+def get_scene_ids():
+    return os.listdir(f'{CODE_DIR}/kubric/outputs')
+
 def load_nerf_pipeline_for_scene(scene_id=0):
     os.chdir(f'{CODE_DIR}/kubric')
     path = glob2(f'{DS_DIR}/nerfacto/{scene_id}/nerfacto/*/config.yml')[0]

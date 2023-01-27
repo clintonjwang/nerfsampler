@@ -7,10 +7,7 @@ import numpy as np
 from functools import partial
 
 from nerfsampler.utils import args as args_module
-from nerfsampler.experiments.sdf import train_nerf_to_sdf
-from nerfsampler.experiments.classify import train_classifier
 from nerfsampler.experiments.segment import train_segmenter
-from nerfsampler.experiments.generate import train_generator
 
 def main():
     os.environ['WANDB_API_KEY'] = open(os.path.expandvars('$NFS/.wandb'), 'r').read().strip()
@@ -22,10 +19,7 @@ def main():
         np.random.seed(args["random seed"])
         torch.manual_seed(args["random seed"])
     method_dict = {
-        'classify': train_classifier,
-        'sdf': train_nerf_to_sdf,
-        'segment': train_segmenter,
-        'generate': train_generator,
+        # 'segment': train_segmenter,
     }
     method = method_dict[args["network"]["task"]]
         

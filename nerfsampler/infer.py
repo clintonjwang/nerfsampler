@@ -4,8 +4,7 @@ import torch
 import numpy as np
 
 from nerfsampler.utils import args as args_module
-from nerfsampler.experiments.segment import clip_segment
-# from nerfsampler.experiments.sdf import test_nerf_to_sdf
+from nerfsampler.experiments.segment import run_segmenter
 
 def main():
     args = args_module.parse_args(sys.argv[1:])
@@ -17,12 +16,10 @@ def main():
         torch.manual_seed(args["random seed"])
 
     method_dict = {
-        # 'classify': test_inr_classifier,
-        # 'sdf': train_nerf_to_sdf,
-        'segment': clip_segment,
-        # 'generate': test_inr_generator,
+        'segment': run_segmenter,
+        'edit': run_segmenter,
     }
-    method_dict[args["network"]["task"]](args=args)
+    method_dict[args["task"]](args=args)
 
 if __name__ == "__main__":
     main()
