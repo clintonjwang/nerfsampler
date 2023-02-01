@@ -5,7 +5,7 @@ from diffusers import StableDiffusionImg2ImgPipeline
 from diffusers import StableDiffusionPipeline
 from diffusers import DPMSolverMultistepScheduler
 
-def img2img(image, model_type):
+def img2img(image, model_type='base'):
     if model_type == 'protogen':
         pipe = StableDiffusionPipeline.from_pretrained(
             'darkstorm2150/Protogen_x5.3_Official_Release', #Photorealism
@@ -18,12 +18,10 @@ def img2img(image, model_type):
     else:
         pipe = StableDiffusionImg2ImgPipeline.from_pretrained("runwayml/stable-diffusion-v1-5", 
             safety_checker=None,
-            torch_dtype=torch.float16).to(
-            'cuda'
-        )
+            torch_dtype=torch.float16).to('cuda')
     pipe.enable_xformers_memory_efficient_attention()
 
-    prompt = "cartoon wallet, creative masterpiece, hand-drawn, Disney, large eyes, hyper detailed"
+    prompt = "TBD"
     folder = f'out'
     os.makedirs(folder, exist_ok=True)
     init_image = Image.fromarray(image).convert('RGB').resize((768, 768), Image.Resampling.BICUBIC)

@@ -1,12 +1,9 @@
-data_nerfstudio_poster:
-- a poster
-- the floor
-- a chair
 data-nerfstudio-campanelle:
-- the ground
-- pasta
-- a plate
-- a table
+- pavement
+- grass
+- building
+- windows
+- door
 data-nerfstudio-desolation:
 - person
 - the ground

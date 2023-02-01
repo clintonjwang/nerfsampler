@@ -12,12 +12,14 @@ def get_scene_ids():
 
 def load_nerf_pipeline_for_scene(scene_id=0):
     os.chdir(f'{CODE_DIR}/kubric')
-    path = glob2(f'{DS_DIR}/nerfacto/{scene_id}/nerfacto/*/config.yml')[0]
+    if not osp.exists(f"{CODE_DIR}/kubric/outputs/{scene_id}/nerfacto"):
+        raise ValueError(f"{scene_id=} not found in {CODE_DIR}/kubric/outputs")
+    path = glob2(f'{CODE_DIR}/kubric/outputs/{scene_id}/nerfacto/*/config.yml')[0]
+    # path = glob2(f'{DS_DIR}/nerfacto/{scene_id}/nerfacto/*/config.yml')[0]
     config, pipeline, checkpoint_path = eval_setup(Path(path), test_mode="inference")
     pipeline.eval()
-    os.chdir(f'{CODE_DIR}/nerfsampler')
     return pipeline
-        
+    
 
 # def clean_kubric():
 #     """

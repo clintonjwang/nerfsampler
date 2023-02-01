@@ -19,7 +19,10 @@ def main():
         'segment': run_segmenter,
         'edit': run_segmenter,
     }
-    method_dict[args["task"]](args=args)
+    if args["task"] in method_dict.keys():
+        method_dict[args["task"]](args=args)
+    else:
+        run_segmenter(args=args)
 
 if __name__ == "__main__":
     main()

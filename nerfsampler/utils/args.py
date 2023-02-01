@@ -3,7 +3,6 @@ Argument parsing
 """
 import argparse
 import os
-import shutil
 import wandb
 import yaml
 from glob import glob
@@ -17,12 +16,13 @@ def parse_args(args):
     parser.add_argument('-c', '--config_name')
     parser.add_argument('-j', '--job_id', default="manual")
     parser.add_argument('-s', '--sweep_id', default=None)
+    parser.add_argument('-e', '--edit_type', default=None)
     cmd_args = parser.parse_args(args)
 
     config_name = cmd_args.job_id if cmd_args.config_name is None else cmd_args.config_name
     configs = glob(osp.join(CONFIG_DIR, "*", config_name+".yaml"))
     if len(configs) == 0:
-        raise ValueError(f"Config {config_name} not found in {CONFIG_DIR}")
+        raise ValueError(f"{config_name=} not found in {CONFIG_DIR}")
     main_config_path = configs[0]
 
     args = args_from_file(main_config_path, cmd_args)
@@ -74,7 +74,7 @@ def args_from_file(path, cmd_args=None):
         raise ValueError(f"bad config_name {cmd_args.config_name}")
 
     if cmd_args is not None:
-        for param in ["job_id", "config_name", 'target_job', 'sweep_id', 'no_wandb']:
+        for param in ["job_id", "config_name", 'edit_type', 'sweep_id']:
             if hasattr(cmd_args, param):
                 args[param] = getattr(cmd_args, param)
 
@@ -88,7 +88,7 @@ def args_from_file(path, cmd_args=None):
                 config_path = glob(osp.join(CONFIG_DIR, "*", p+".yaml"))[0]
                 args = merge_args(yaml.safe_load(open(config_path, 'r')), args)
             if "parent" in args:
-                raise NotImplementedError("need to handle case of multiple parents each with other parents")
+                raise NotImplementedError("cannot handle multiple parents each with other parents")
 
     config_path = osp.join(CONFIG_DIR, "default.yaml")
     args = merge_args(yaml.safe_load(open(config_path, 'r')), args)
@@ -96,7 +96,9 @@ def args_from_file(path, cmd_args=None):
     paths = args["paths"]
     paths["slurm output dir"] = osp.expandvars(paths["slurm output dir"])
     paths["job output dir"] = osp.join(paths["slurm output dir"], args["job_id"])
-    args['class_labels'] = yaml.safe_load(
-        open(osp.join(CONFIG_DIR,'class_labels'), 'r'))[args['scene_id']]
+    label_dict = yaml.safe_load(
+        open(osp.join(CONFIG_DIR,'class_labels.yaml'), 'r'))
+    if 'class_labels' not in args['data'] and args['data']['scene_id'] in label_dict:
+        args['data']['class_labels'] = label_dict[args['data']['scene_id']]
 
     return args

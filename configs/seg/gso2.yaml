@@ -1,0 +1,9 @@
+parent: base_edit
+task: edit
+edit_task: delete
+n_frames: 64
+target_seg: 1
+data:
+  scene_id: gso2
+  class_labels:
+  - ground

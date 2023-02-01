@@ -1,0 +1,11 @@
+parent: base_edit
+data:
+  scene_id: 2
+  class_labels:
+  - a golden cube
+  - a yellow hoop
+  - a green cube
+  - a purple cube
+  - a purple cylinder
+  - a gray ball
+  - a gray floor

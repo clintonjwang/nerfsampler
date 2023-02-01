@@ -1,0 +1,11 @@
+parent: base_edit
+task: render segs
+data:
+  scene_id: gso0
+  class_labels:
+  - yellow cereal box
+  - big white box
+  - black fedora
+  - gray shoe
+  - tiny purple box
+  - ground

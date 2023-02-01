@@ -1,0 +1,5 @@
+parent: base_edit
+task: render RGB
+data:
+  scene_id: data-nerfstudio-desolation
+  type: 360
