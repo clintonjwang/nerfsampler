@@ -1,6 +1,6 @@
 parent: base_edit
 task: edit
-edit_task: delete
+edit_task: inpaint
 n_frames: 64
 target_seg: 1
 data:

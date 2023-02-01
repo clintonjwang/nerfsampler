@@ -59,7 +59,7 @@ def duplicate_density_fxn(orig_fxn, orig_coords, transform):
     new_coords = torch.matmul(orig_coords, transform[:,:3]) + transform[:,-1]
     inv_tx = torch.inverse(transform[:,:3])
     ot = OccupancyTester(new_coords)
-    def new_fxn(positions: TensorType["bs":..., 3]) -> TensorType["bs":..., 1]:
+    def new_fxn(positions):
         in_range = ot.get_mask_of_points_inside_pcd(positions)
         positions = torch.where(in_range.unsqueeze(-1), torch.matmul(positions - transform[:,-1], inv_tx), positions)
         return orig_fxn(positions)
@@ -118,11 +118,9 @@ def attenuate_field_density(self, coords, scale=0.):
 
 def attenuate_density_fxn(orig_fxn, coords, scale=0.):
     ot = OccupancyTester(coords)
-    def new_fxn(positions: TensorType["bs":..., 3]) -> TensorType["bs":..., 1]:
-        in_range = ot.get_mask_of_points_inside_pcd(positions)
-        # diffs = (coords.view(1,1,-1,3) - positions.unsqueeze(-2))
-        # in_range = diffs.norm(dim=-1).min(dim=2) < threshold
+    def new_fxn(positions):
         out = orig_fxn(positions)
+        in_range = ot.get_mask_of_points_inside_pcd(positions)
         out[in_range] *= scale
         return out
     return new_fxn
@@ -131,7 +129,7 @@ def animate_density_fxn(field, orig_fxn, orig_coords):
     old_ot = OccupancyTester(orig_coords)
     cog = orig_coords.mean(dim=0)
 
-    def new_fxn(positions: TensorType["bs":..., 3]) -> TensorType["bs":..., 1]:
+    def new_fxn(positions):
         transform = field.animation_transform
         new_coords = torch.matmul(orig_coords - cog, transform[:,:3]) + transform[:,-1] + cog
         new_ot = OccupancyTester(new_coords)

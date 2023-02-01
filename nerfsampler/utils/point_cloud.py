@@ -4,32 +4,30 @@ import numpy as np
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.neighbors import kneighbors_graph
 from scipy.sparse import csgraph
+from typing import Optional, Tuple
+import matplotlib.pyplot as plt
+import numpy as np
 
 from nerfsampler.utils import mesh
 
-class OccupancyTester:
+class MeshOccupancyTester:
     # http://www.open3d.org/docs/release/tutorial/geometry/distance_queries.html
-    def __init__(self, pcd):
-        self.mesh = mesh.pcd_to_mesh(pcd)
+    def __init__(self, mesh):
         self.scene = o3d.t.geometry.RaycastingScene()
-        self.scene.add_triangles(self.mesh)
+        self.scene.add_triangles(mesh)
 
-    def get_mask_of_points_inside_pcd(self, query):
-        pdb.set_trace()
-        occupancy = self.scene.compute_occupancy(query)
-        return occupancy == 1
+    def get_mask_of_points_inside_pcd(self, query, eps=.01):
+        device = query.device
+        query = o3d.core.Tensor(query.cpu().numpy(), dtype=o3d.core.float32)
+        occupancy = self.scene.compute_signed_distance(query) < eps
+        return torch.tensor(occupancy.numpy(), device=device, dtype=torch.bool)
 
-class BBoxOccupancyTester:
+class OccupancyTester:
     def __init__(self, pcd, eps=3e-4):
         self.bbox = pcd.min(dim=0).values-eps, pcd.max(dim=0).values+eps
 
     def get_mask_of_points_inside_pcd(self, query):
         return (query > self.bbox[0]).min(dim=-1).values & (query < self.bbox[1]).min(dim=-1).values
-
-from typing import Optional, Tuple
-
-import matplotlib.pyplot as plt
-import numpy as np
 
 def plot_point_cloud(
     pc,

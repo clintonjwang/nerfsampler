@@ -4,21 +4,43 @@ import opensimplex
 from sklearn.decomposition import PCA
 F = torch.nn.functional
 from math import sin, cos, pi
+import numpy as np
 
 from nerfstudio.cameras.rays import RaySamples
 from nerfstudio.field_components.field_heads import FieldHeadNames
+from nerfsampler.utils import point_cloud
 
-# @njit(cache=True, parallel=True)
-def noise4a(points, t):
-    rgbs = []
-    for ix in range(len(points)):
-        rgbs.append(opensimplex.noise4(points[ix,0], points[ix,1], points[ix,2], t))
-    return rgbs
+import open3d.ml.torch as ml3d
 
-from nerfstudio.cameras.rays import RaySamples
-from nerfstudio.field_components.field_heads import FieldHeadNames
+def forward_inpaint(self, inpaint_scale, inpaint_coords):
+    nsearch = ml3d.layers.KNNSearch(return_distances=True)
+    def forward(ray_samples: RaySamples, compute_normals: bool = False):
+        if compute_normals:
+            with torch.enable_grad():
+                density, density_embedding = self.get_density(ray_samples)
+        else:
+            density, density_embedding = self.get_density(ray_samples)
 
-def forward_recolor(self, recolored_coords, eps=.01):
+        field_outputs = self.get_outputs(ray_samples, density_embedding=density_embedding)
+        positions = ray_samples.frustums.get_positions()
+        orig_shape = positions.shape
+        positions = positions.reshape(-1, 3)
+        field_outputs[FieldHeadNames.RGB] = field_outputs[FieldHeadNames.RGB].reshape(-1, 3)
+        index, _, dist = nsearch(inpaint_coords.cpu(), queries=positions.cpu(), k=1)
+        mask = dist < 0.07
+        field_outputs[FieldHeadNames.RGB][mask] *= inpaint_scale[index[mask].long()]
+        torch.clamp_max_(field_outputs[FieldHeadNames.RGB], 1)
+        field_outputs[FieldHeadNames.RGB] = field_outputs[FieldHeadNames.RGB].reshape(*orig_shape)
+        field_outputs[FieldHeadNames.DENSITY] = density  # type: ignore
+
+        if compute_normals:
+            with torch.enable_grad():
+                normals = self.get_normals()
+            field_outputs[FieldHeadNames.NORMALS] = normals  # type: ignore
+        return field_outputs
+    return forward
+
+def forward_recolor(self, recolored_coords):
     bbox = recolored_coords.min(dim=0).values-eps, recolored_coords.max(dim=0).values+eps
     def forward(ray_samples: RaySamples, compute_normals: bool = False):
         if compute_normals:
@@ -54,7 +76,14 @@ def forward_recolor(self, recolored_coords, eps=.01):
     return forward
 
 
-def forward_proc_texture(self, coords, eps=.01):
+# @njit(cache=True, parallel=True)
+def noise4a(points, t):
+    rgbs = []
+    for ix in range(len(points)):
+        rgbs.append(opensimplex.noise4(points[ix,0], points[ix,1], points[ix,2], t))
+    return rgbs
+
+def forward_proc_texture(self, coords):
     bbox = coords.min(dim=0).values-eps, coords.max(dim=0).values+eps
     opensimplex.seed(324)
     def forward(ray_samples: RaySamples, compute_normals: bool = False):
@@ -87,7 +116,7 @@ def forward_proc_texture(self, coords, eps=.01):
         return field_outputs
     return forward
 
-def forward_uv_map(self, coords, texture, eps=.01):
+def forward_uv_map(self, coords, texture):
     bbox = coords.min(dim=0).values-eps, coords.max(dim=0).values+eps
     def forward(ray_samples: RaySamples, compute_normals: bool = False):
         if compute_normals:

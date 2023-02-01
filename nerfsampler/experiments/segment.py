@@ -9,8 +9,6 @@ from nerfstudio.cameras.cameras import Cameras
 
 from nerfsampler import CODE_DIR
 from nerfsampler.utils.camera import animate_camera
-from nerfsampler.networks.clip import TextEmbedder
-from nerfsampler.networks.feature_extractor import FeatureExtractor
 from nerfsampler.data.nerfacto import load_nerf_pipeline_for_scene
 from nerfsampler.utils import point_cloud, mesh
 from nerfsampler.experiments.render import *
@@ -86,6 +84,8 @@ def setup(args):
         seg_coords = seg_coords[seg_coords.norm(dim=-1) < cutoff]
         seg_coords = point_cloud.select_largest_subset(seg_coords, k=5)
     else:
+        from nerfsampler.networks.clip import TextEmbedder
+        from nerfsampler.networks.feature_extractor import FeatureExtractor
         class_labels = dl_args['class_labels']
         text_embeddings = TextEmbedder().cuda()(class_labels).T.cpu()
         feature_extractor = FeatureExtractor()
@@ -159,22 +159,29 @@ def run_segmenter(args={}):
     # point_cloud.plot_point_cloud(seg_coords.cpu())
     # plt.savefig('results/seg_coords.png')
     n_frames = args['n_frames']
+    # seg_mesh = mesh.pcd_to_mesh(seg_coords)
+    seg_mesh = seg_coords
 
     print('Starting render')
-    if args['edit_task'] == 'delete':
-        render_with_seg_removed(nerfacto, base_camera_rays, seg_coords, n_frames)
+    if args['edit_task'] == 'inpaint':
+        inpainting = torch.tensor(np.array(Image.open('inpainting.png').resize(
+            (512,512), Image.Resampling.LANCZOS)), device='cuda')
+        render_with_seg_fit_inpaint(nerfacto,
+            base_camera_rays, inpainting, seg_mesh, n_frames)
+    elif args['edit_task'] == 'delete':
+        render_with_seg_removed(nerfacto, base_camera_rays, seg_mesh, n_frames)
         # pipeline = load_nerf_pipeline_for_scene(scene_id=scene_id)
     elif args['edit_task'] == 'recolor':
-        render_with_seg_recolored(nerfacto, base_camera_rays, seg_coords, n_frames)
+        render_with_seg_recolored(nerfacto, base_camera_rays, seg_mesh, n_frames)
     elif args['edit_task'] == 'duplicate':
-        render_with_seg_duplicated(nerfacto, base_camera_rays, seg_coords, n_frames)
+        render_with_seg_duplicated(nerfacto, base_camera_rays, seg_mesh, n_frames)
     elif args['edit_task'] == 'animate':
-        render_with_affine_tx(nerfacto, base_camera_rays, seg_coords, n_frames)
+        render_with_affine_tx(nerfacto, base_camera_rays, seg_mesh, n_frames)
     elif args['edit_task'] == 'procedural_texture':
-        render_with_procedural_texture(nerfacto, base_camera_rays, seg_coords, n_frames)
+        render_with_procedural_texture(nerfacto, base_camera_rays, seg_mesh, n_frames)
     elif args['edit_task'] == 'texture_map':
         texture_map = pil_to_tensor(Image.open('texture_map.jpeg')).cuda()
-        render_with_texture_map(nerfacto, base_camera_rays, seg_coords, texture_map, n_frames)
+        render_with_texture_map(nerfacto, base_camera_rays, seg_mesh, texture_map, n_frames)
     
 from skimage.morphology import binary_erosion
 def load_gt_segs(nerfacto, cams, args, frames):
