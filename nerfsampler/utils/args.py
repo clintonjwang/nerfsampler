@@ -98,7 +98,7 @@ def args_from_file(path, cmd_args=None):
     paths["job output dir"] = osp.join(paths["slurm output dir"], args["job_id"])
     label_dict = yaml.safe_load(
         open(osp.join(CONFIG_DIR,'class_labels.yaml'), 'r'))
-    if 'class_labels' not in args['data'] and args['data']['scene_id'] in label_dict:
+    if 'data' in args and 'class_labels' not in args['data'] and args['data']['scene_id'] in label_dict:
         args['data']['class_labels'] = label_dict[args['data']['scene_id']]
 
     return args

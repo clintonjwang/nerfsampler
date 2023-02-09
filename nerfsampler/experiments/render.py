@@ -11,6 +11,9 @@ from math import sin, cos, pi
 
 from PIL import Image
 
+def render_with_seg_fit_inpaint(nerfacto, camera_ray_bundle):
+    return
+
 def render_with_seg_fit_inpaint(nerfacto, camera_ray_bundle, inpainting, seg, n_frames=64):
     for ix in range(len(nerfacto.density_fns)):
         nerfacto.density_fns[ix] = attenuate_density_fxn(nerfacto.density_fns[ix], seg)

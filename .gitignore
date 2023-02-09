@@ -8,6 +8,7 @@ backup/
 scripts/
 *.ipynb
 *.png
+diffusers
 
 __pycache__/
 *.pyc
