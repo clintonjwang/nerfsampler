@@ -2,7 +2,7 @@ import torch
 import os
 
 from PIL import Image
-from diffusers import StableDiffusionInpaintPipeline as StableDiffusionInpaintPipeline
+from nerfsampler.diffusers import StableDiffusionInpaintPipeline as StableDiffusionInpaintPipeline
 
 class Inpainter:
     def __init__(self):

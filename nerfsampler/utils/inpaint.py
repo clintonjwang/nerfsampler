@@ -1,6 +1,6 @@
 import shutil
 import torch, sys, os, argparse
-from diffusers import StableDiffusionInpaintPipeline
+from nerfsampler.diffusers import StableDiffusionInpaintPipeline
 from PIL import Image
 from torchvision.transforms.functional import pil_to_tensor, to_pil_image
 torch.backends.cudnn.benchmark = True

@@ -3,9 +3,9 @@ import shutil
 osp = os.path
 from pathlib import Path
 
+from nerfstudio.utils.eval_utils import eval_setup
 from nerfsampler import CODE_DIR, DS_DIR
 from nerfsampler.utils.util import glob2
-from nerfstudio.utils.eval_utils import eval_setup
 
 def get_scene_ids():
     return os.listdir(f'{CODE_DIR}/kubric/outputs')

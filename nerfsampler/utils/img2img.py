@@ -1,9 +1,9 @@
 import torch, os
 import numpy as np
 from PIL import Image
-from diffusers import StableDiffusionImg2ImgPipeline
-from diffusers import StableDiffusionPipeline
-from diffusers import DPMSolverMultistepScheduler
+from nerfsampler.diffusers import StableDiffusionImg2ImgPipeline
+from nerfsampler.diffusers import StableDiffusionPipeline
+from nerfsampler.diffusers import DPMSolverMultistepScheduler
 
 def img2img(image, model_type='base'):
     if model_type == 'protogen':

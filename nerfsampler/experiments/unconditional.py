@@ -3,22 +3,21 @@ import inspect
 import logging
 import math
 import os
-from pathlib import Path
-from typing import Optional
+import pdb
+osp = os.path
 
 import torch
 import torch.nn.functional as F
 
 import datasets
-import diffusers
+from nerfsampler import diffusers
 from accelerate import Accelerator
 from accelerate.logging import get_logger
-from datasets import load_dataset
-from diffusers import DDPMPipeline, DDPMScheduler, UNet2DModel
-from diffusers.optimization import get_scheduler
-from diffusers.training_utils import EMAModel
-from diffusers.utils import check_min_version
-from huggingface_hub import HfFolder, Repository, create_repo, whoami
+from nerfsampler.diffusers import DDPMScheduler
+from nerfsampler.diffusers.models.vq_model import VQModel
+from nerfsampler.diffusers.optimization import get_scheduler
+from nerfsampler.data.core import get_dataset
+from nerfsampler.diffusers.training_utils import EMAModel
 from torchvision.transforms import (
     CenterCrop,
     Compose,
@@ -29,10 +28,10 @@ from torchvision.transforms import (
     ToTensor,
 )
 from tqdm.auto import tqdm
-from nerfsampler.networks.ldm import LatentDiffusionModel
+from nerfsampler.networks.ldm import LDM, LatentDiffusionModel
+from nerfsampler.networks.transformer_2d import Transformer2DModel
+from nerfsampler.srt.encoder import ImprovedSRTEncoder
 
-
-# Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 
 logger = get_logger(__name__, log_level="INFO")
 
@@ -56,33 +55,7 @@ def _extract_into_tensor(arr, timesteps, broadcast_shape):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Simple example of a training script.")
-    parser.add_argument(
-        "--dataset_name",
-        type=str,
-        default=None,
-        help=(
-            "The name of the Dataset (from the HuggingFace hub) to train on (could be your own, possibly private,"
-            " dataset). It can also be a path pointing to a local copy of a dataset in your filesystem,"
-            " or to a folder containing files that HF Datasets can understand."
-        ),
-    )
-    parser.add_argument(
-        "--dataset_config_name",
-        type=str,
-        default=None,
-        help="The config of the Dataset, leave as None if there's only one config.",
-    )
-    parser.add_argument(
-        "--train_data_dir",
-        type=str,
-        default=None,
-        help=(
-            "A folder containing the training data. Folder contents must follow the structure described in"
-            " https://huggingface.co/docs/datasets/image_dataset#imagefolder. In particular, a `metadata.jsonl` file"
-            " must exist to provide the captions for the images. Ignored if `dataset_name` is specified."
-        ),
-    )
+    parser = argparse.ArgumentParser()
     parser.add_argument(
         "--output_dir",
         type=str,
@@ -93,13 +66,22 @@ def parse_args():
     parser.add_argument(
         "--cache_dir",
         type=str,
-        default=None,
+        default='./cache',
         help="The directory where the downloaded models and datasets will be stored.",
     )
     parser.add_argument(
         "--resolution",
         type=int,
         default=64,
+        help=(
+            "The resolution for input images, all the images in the train/validation dataset will be resized to this"
+            " resolution"
+        ),
+    )
+    parser.add_argument(
+        "--latent_dims",
+        type=int,
+        default=128,
         help=(
             "The resolution for input images, all the images in the train/validation dataset will be resized to this"
             " resolution"
@@ -163,17 +145,6 @@ def parse_args():
     parser.add_argument("--ema_inv_gamma", type=float, default=1.0, help="The inverse gamma value for the EMA decay.")
     parser.add_argument("--ema_power", type=float, default=3 / 4, help="The power value for the EMA decay.")
     parser.add_argument("--ema_max_decay", type=float, default=0.9999, help="The maximum decay magnitude for EMA.")
-    parser.add_argument("--push_to_hub", action="store_true", help="Whether or not to push the model to the Hub.")
-    parser.add_argument("--hub_token", type=str, default=None, help="The token to use to push to the Model Hub.")
-    parser.add_argument(
-        "--hub_model_id",
-        type=str,
-        default=None,
-        help="The name of the repository to keep in sync with the local `output_dir`.",
-    )
-    parser.add_argument(
-        "--hub_private_repo", action="store_true", help="Whether or not to create a private repository."
-    )
     parser.add_argument(
         "--logger",
         type=str,
@@ -238,20 +209,7 @@ def parse_args():
     if env_local_rank != -1 and env_local_rank != args.local_rank:
         args.local_rank = env_local_rank
 
-    if args.dataset_name is None and args.train_data_dir is None:
-        raise ValueError("You must specify either a dataset name from the hub or a train data directory.")
-
     return args
-
-
-def get_full_repo_name(model_id: str, organization: Optional[str] = None, token: Optional[str] = None):
-    if token is None:
-        token = HfFolder.get_token()
-    if organization is None:
-        username = whoami(token)["name"]
-        return f"{username}/{model_id}"
-    else:
-        return f"{organization}/{model_id}"
 
 
 def main(args):
@@ -261,7 +219,7 @@ def main(args):
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
         log_with=args.logger,
-        logging_dir=logging_dir,
+        project_dir=logging_dir,
     )
 
     # Make one log on every process with the configuration for debugging.
@@ -280,26 +238,12 @@ def main(args):
 
     # Handle the repository creation
     if accelerator.is_main_process:
-        if args.push_to_hub:
-            if args.hub_model_id is None:
-                repo_name = get_full_repo_name(Path(args.output_dir).name, token=args.hub_token)
-            else:
-                repo_name = args.hub_model_id
-            create_repo(repo_name, exist_ok=True, token=args.hub_token)
-            repo = Repository(args.output_dir, clone_from=repo_name, token=args.hub_token)
-
-            with open(os.path.join(args.output_dir, ".gitignore"), "w+") as gitignore:
-                if "step_*" not in gitignore:
-                    gitignore.write("step_*\n")
-                if "epoch_*" not in gitignore:
-                    gitignore.write("epoch_*\n")
-        elif args.output_dir is not None:
-            os.makedirs(args.output_dir, exist_ok=True)
+        os.makedirs(args.output_dir, exist_ok=True)
 
     # Initialize the model
-    model = LatentDiffusionModel(
-        sample_size=args.resolution,
-    )
+    vqvae = VQModel(latent_channels=args.latent_dims)
+    model = denoiser = Transformer2DModel(in_channels=args.latent_dims, out_channels=args.latent_dims, num_layers=3)
+    # model = LDM(vqvae, denoiser)
 
     # Create EMA for the model.
     if args.use_ema:
@@ -331,44 +275,44 @@ def main(args):
         eps=args.adam_epsilon,
     )
 
-    # Get the datasets: you can either provide your own training and evaluation files (see below)
-    # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
-
-    # In distributed training, the load_dataset function guarantees that only one local process can concurrently
-    # download the dataset.
-    if args.dataset_name is not None:
-        dataset = load_dataset(
-            args.dataset_name,
-            args.dataset_config_name,
-            cache_dir=args.cache_dir,
-            split="train",
-        )
-    else:
-        dataset = load_dataset("imagefolder", data_dir=args.train_data_dir, cache_dir=args.cache_dir, split="train")
-        # See more about loading custom images at
-        # https://huggingface.co/docs/datasets/v2.4.0/en/image_load#imagefolder
-
+    device = accelerator.device
+        
     # Preprocessing the datasets and DataLoaders creation.
-    augmentations = Compose(
-        [
-            Resize(args.resolution, interpolation=InterpolationMode.BILINEAR),
-            CenterCrop(args.resolution),
-            RandomHorizontalFlip(),
-            ToTensor(),
-            Normalize([0.5], [0.5]),
-        ]
-    )
+    # augmentations = Compose(
+    #     [
+    #         Resize(args.resolution, interpolation=InterpolationMode.BILINEAR),
+    #         CenterCrop(args.resolution),
+    #         RandomHorizontalFlip(),
+    #         ToTensor(),
+    #         Normalize([0.5], [0.5]),
+    #     ]
+    # )
+    # def transforms(examples):
+    #     images = [augmentations(image.convert("RGB")) for image in examples["image"]]
+    #     return {"input": images}
 
-    def transforms(examples):
-        images = [augmentations(image.convert("RGB")) for image in examples["image"]]
-        return {"input": images}
-
-    logger.info(f"Dataset size: {len(dataset)}")
-
-    dataset.set_transform(transforms)
+    batch_size = args.train_batch_size
+    train_dataset = get_dataset("train", {'dataset':'msn'})
     train_dataloader = torch.utils.data.DataLoader(
-        dataset, batch_size=args.train_batch_size, shuffle=True, num_workers=args.dataloader_num_workers
-    )
+        train_dataset, batch_size=batch_size, num_workers=1, pin_memory=True,
+        shuffle=False, persistent_workers=True)
+    # eval_dataset = get_dataset("eval", {'dataset':'msn'})
+    # val_dataloader = torch.utils.data.DataLoader(
+    #     eval_dataset, batch_size=args.eval_batch_size, num_workers=1, 
+    #     shuffle=False, pin_memory=False, persistent_workers=True)
+
+    # Loaders for visualization scenes
+    # vis_loader_val = torch.utils.data.DataLoader(
+    #     eval_dataset, batch_size=1, shuffle=shuffle, worker_init_fn=data.worker_init_fn)
+    # vis_loader_train = torch.utils.data.DataLoader(
+    #     train_dataset, batch_size=1, shuffle=shuffle, worker_init_fn=data.worker_init_fn)
+    # print('Data loaders initialized.')
+
+    # data_vis_val = next(iter(vis_loader_val))  # Validation set data for visualization
+    # train_dataset.mode = 'val'  # Get validation info from training set just this once
+    # data_vis_train = next(iter(vis_loader_train))  # Validation set data for visualization
+    # train_dataset.mode = 'train'
+    # print('Visualization data loaded.')
 
     # Initialize the learning rate scheduler
     lr_scheduler = get_scheduler(
@@ -398,7 +342,7 @@ def main(args):
     max_train_steps = args.num_epochs * num_update_steps_per_epoch
 
     logger.info("***** Running training *****")
-    logger.info(f"  Num examples = {len(dataset)}")
+    logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num Epochs = {args.num_epochs}")
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
@@ -432,7 +376,10 @@ def main(args):
             resume_global_step = global_step * args.gradient_accumulation_steps
             first_epoch = global_step // num_update_steps_per_epoch
             resume_step = resume_global_step % (num_update_steps_per_epoch * args.gradient_accumulation_steps)
-
+    
+    state_dict = torch.load(osp.expandvars('$NFS/code/nerfsampler/model/isrt_pretrained/model.pt'))
+    encoder = ImprovedSRTEncoder().to(device)
+    encoder.load_state_dict(state_dict['encoder'])
     # Train!
     for epoch in range(first_epoch, args.num_epochs):
         model.train()
@@ -440,37 +387,49 @@ def main(args):
         progress_bar.set_description(f"Epoch {epoch}")
         for step, batch in enumerate(train_dataloader):
             # Skip steps until we reach the resumed step
+            input_images = batch.get('input_images').to(device)
+            input_camera_pos = batch.get('input_camera_pos').to(device)
+            input_rays = batch.get('input_rays').to(device)
+            # target_pixels = batch.get('target_pixels').to(device)
+            # target_camera_pos = batch.get('target_camera_pos').to(device)
+            # target_rays = batch.get('target_rays').to(device)
+            
+            torch.cuda.empty_cache()
+            with torch.no_grad():
+                x = encoder(input_images, input_camera_pos, input_rays)
+            clean_latents = x
+            # clean_latents = vqvae.encode(x, return_dict=False)
+
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
                 if step % args.gradient_accumulation_steps == 0:
                     progress_bar.update(1)
                 continue
-
-            clean_images = batch["input"]
+            
             # Sample noise that we'll add to the images
-            noise = torch.randn(clean_images.shape).to(clean_images.device)
-            bsz = clean_images.shape[0]
+            noise = torch.randn(clean_latents.shape).to(clean_latents.device)
+            bsz = clean_latents.shape[0]
             # Sample a random timestep for each image
             timesteps = torch.randint(
-                0, noise_scheduler.config.num_train_timesteps, (bsz,), device=clean_images.device
+                0, noise_scheduler.config.num_train_timesteps, (bsz,), device=clean_latents.device
             ).long()
 
             # Add noise to the clean images according to the noise magnitude at each timestep
             # (this is the forward diffusion process)
-            noisy_images = noise_scheduler.add_noise(clean_images, noise, timesteps)
+            noisy_latents = noise_scheduler.add_noise(clean_latents, noise, timesteps)
 
             with accelerator.accumulate(model):
                 # Predict the noise residual
-                model_output = model(noisy_images, timesteps).sample
+                denoised_latents = model(noisy_latents, timesteps).sample
 
                 if args.prediction_type == "epsilon":
-                    loss = F.mse_loss(model_output, noise)  # this could have different weights!
+                    loss = F.mse_loss(denoised_latents, noise)  # this could have different weights!
                 elif args.prediction_type == "sample":
                     alpha_t = _extract_into_tensor(
-                        noise_scheduler.alphas_cumprod, timesteps, (clean_images.shape[0], 1, 1, 1)
+                        noise_scheduler.alphas_cumprod, timesteps, (clean_latents.shape[0], 1, 1, 1)
                     )
                     snr_weights = alpha_t / (1 - alpha_t)
                     loss = snr_weights * F.mse_loss(
-                        model_output, clean_images, reduction="none"
+                        denoised_latents, clean_latents, reduction="none"
                     )  # use SNR weighting from distillation paper
                     loss = loss.mean()
                 else:
@@ -507,18 +466,19 @@ def main(args):
         accelerator.wait_for_everyone()
 
         # Generate sample images for visual inspection
-        if accelerator.is_main_process:
+        if False:#accelerator.is_main_process:
             if epoch % args.save_images_epochs == 0 or epoch == args.num_epochs - 1:
-                unet = accelerator.unwrap_model(model)
+                denoiser = accelerator.unwrap_model(model)
                 if args.use_ema:
-                    ema_model.copy_to(unet.parameters())
-                pipeline = DDPMPipeline(
-                    unet=unet,
+                    ema_model.copy_to(denoiser.parameters())
+                pipeline = LatentDiffusionModel(
+                    denoiser=denoiser,
                     scheduler=noise_scheduler,
                 )
 
                 generator = torch.Generator(device=pipeline.device).manual_seed(0)
                 # run pipeline in inference (sample random noise and denoise)
+                pdb.set_trace()
                 images = pipeline(
                     generator=generator,
                     batch_size=args.eval_batch_size,
@@ -536,8 +496,6 @@ def main(args):
             if epoch % args.save_model_epochs == 0 or epoch == args.num_epochs - 1:
                 # save the model
                 pipeline.save_pretrained(args.output_dir)
-                if args.push_to_hub:
-                    repo.push_to_hub(commit_message=f"Epoch {epoch}", blocking=False)
 
     accelerator.end_training()
 

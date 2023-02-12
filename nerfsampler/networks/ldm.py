@@ -24,11 +24,19 @@ from transformers.activations import ACT2FN
 from transformers.modeling_outputs import BaseModelOutput
 from transformers.utils import logging
 
-from ...models import AutoencoderKL, UNet2DConditionModel, UNet2DModel, VQModel
-from ...schedulers import DDIMScheduler, LMSDiscreteScheduler, PNDMScheduler
-from ...utils import randn_tensor
-from ..pipeline_utils import DiffusionPipeline, ImagePipelineOutput
+from nerfsampler.diffusers.models import AutoencoderKL, VQModel
+from nerfsampler.diffusers.schedulers import DDIMScheduler, LMSDiscreteScheduler, PNDMScheduler
+from nerfsampler.diffusers.utils import randn_tensor
+from nerfsampler.diffusers.pipeline_utils import DiffusionPipeline, ImagePipelineOutput
+from nerfsampler.networks.transformer import Transformer
 
+class LDM(nn.Module):
+    def __init__(self, vqvae, denoiser) -> None:
+        super().__init__()
+        vqvae.enable_xformers_memory_efficient_attention()
+        denoiser.enable_xformers_memory_efficient_attention()
+        self.vqvae = vqvae
+        self.denoiser = denoiser
 
 class LatentDiffusionModel(DiffusionPipeline):
     r"""
@@ -43,9 +51,9 @@ class LatentDiffusionModel(DiffusionPipeline):
         tokenizer (`transformers.BertTokenizer`):
             Tokenizer of class
             [BertTokenizer](https://huggingface.co/docs/transformers/model_doc/bert#transformers.BertTokenizer).
-        unet ([`UNet2DConditionModel`]): Conditional U-Net architecture to denoise the encoded image latents.
+        denoiser ([`Transformer`]): Conditional U-Net architecture to denoise the encoded image latents.
         scheduler ([`SchedulerMixin`]):
-            A scheduler to be used in combination with `unet` to denoise the encoded image latents. Can be one of
+            A scheduler to be used in combination with `denoiser` to denoise the encoded image latents. Can be one of
             [`DDIMScheduler`], [`LMSDiscreteScheduler`], or [`PNDMScheduler`].
     """
 
@@ -54,11 +62,11 @@ class LatentDiffusionModel(DiffusionPipeline):
         vqvae: Union[VQModel, AutoencoderKL],
         bert: PreTrainedModel,
         tokenizer: PreTrainedTokenizer,
-        unet: Union[UNet2DModel, UNet2DConditionModel],
+        denoiser: Transformer,
         scheduler: Union[DDIMScheduler, PNDMScheduler, LMSDiscreteScheduler],
     ):
         super().__init__()
-        self.register_modules(vqvae=vqvae, bert=bert, tokenizer=tokenizer, unet=unet, scheduler=scheduler)
+        self.register_modules(vqvae=vqvae, bert=bert, tokenizer=tokenizer, denoiser=denoiser, scheduler=scheduler)
         self.vae_scale_factor = 2 ** (len(self.vqvae.config.block_out_channels) - 1)
 
     @torch.no_grad()
@@ -115,7 +123,7 @@ class LatentDiffusionModel(DiffusionPipeline):
         prompt_embeds = self.bert(text_input.input_ids.to(self.device))[0]
 
         # get the initial random noise unless the user supplied it
-        latents_shape = (batch_size, self.unet.in_channels, n_latents, latent_dim)
+        latents_shape = (batch_size, self.denoiser.in_channels, n_latents, latent_dim)
         if isinstance(generator, list) and len(generator) != batch_size:
             raise ValueError(
                 f"You have passed a list of generators of length {len(generator)}, but requested an effective batch"
@@ -151,7 +159,7 @@ class LatentDiffusionModel(DiffusionPipeline):
                 context = torch.cat([negative_prompt_embeds, prompt_embeds])
 
             # predict the noise residual
-            noise_pred = self.unet(latents_input, t, encoder_hidden_states=context).sample
+            noise_pred = self.denoiser(latents_input, t, encoder_hidden_states=context).sample
             # perform guidance
             if guidance_scale != 1.0:
                 noise_pred_uncond, noise_prediction_text = noise_pred.chunk(2)
