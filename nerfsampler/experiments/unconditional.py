@@ -18,19 +18,20 @@ from nerfsampler.diffusers.models.vq_model import VQModel
 from nerfsampler.diffusers.optimization import get_scheduler
 from nerfsampler.data.core import get_dataset
 from nerfsampler.diffusers.training_utils import EMAModel
-from torchvision.transforms import (
-    CenterCrop,
-    Compose,
-    InterpolationMode,
-    Normalize,
-    RandomHorizontalFlip,
-    Resize,
-    ToTensor,
-)
+# from torchvision.transforms import (
+#     CenterCrop,
+#     Compose,
+#     InterpolationMode,
+#     Normalize,
+#     RandomHorizontalFlip,
+#     Resize,
+#     ToTensor,
+# )
 from tqdm.auto import tqdm
 from nerfsampler.networks.ldm import LDM, LatentDiffusionModel
-from nerfsampler.networks.transformer_2d import Transformer2DModel
+from nerfsampler.networks.prior_transformer import SimpleTransformer as Transformer
 from nerfsampler.srt.encoder import ImprovedSRTEncoder
+from nerfsampler.srt.decoder import NerfDecoder
 
 
 logger = get_logger(__name__, log_level="INFO")
@@ -59,7 +60,7 @@ def parse_args():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="ddpm-model-64",
+        default="ddpm-model-64-2",
         help="The output directory where the model predictions and checkpoints will be written.",
     )
     parser.add_argument("--overwrite_output_dir", action="store_true")
@@ -81,14 +82,10 @@ def parse_args():
     parser.add_argument(
         "--latent_dims",
         type=int,
-        default=128,
-        help=(
-            "The resolution for input images, all the images in the train/validation dataset will be resized to this"
-            " resolution"
-        ),
+        default=768,
     )
     parser.add_argument(
-        "--train_batch_size", type=int, default=16, help="Batch size (per device) for the training dataloader."
+        "--train_batch_size", type=int, default=32, help="Batch size (per device) for the training dataloader."
     )
     parser.add_argument(
         "--eval_batch_size", type=int, default=16, help="The number of images to generate for evaluation."
@@ -241,8 +238,12 @@ def main(args):
         os.makedirs(args.output_dir, exist_ok=True)
 
     # Initialize the model
-    vqvae = VQModel(latent_channels=args.latent_dims)
-    model = denoiser = Transformer2DModel(in_channels=args.latent_dims, out_channels=args.latent_dims, num_layers=3)
+    # vqvae = VQModel(latent_channels=args.latent_dims)
+    model = denoiser = Transformer(
+        num_layers=4,
+        num_attention_heads=16,
+        embedding_dim=args.latent_dims,
+    ) #in_channels=args.latent_dims, out_channels=args.latent_dims, 
     # model = LDM(vqvae, denoiser)
 
     # Create EMA for the model.
@@ -378,8 +379,10 @@ def main(args):
             resume_step = resume_global_step % (num_update_steps_per_epoch * args.gradient_accumulation_steps)
     
     state_dict = torch.load(osp.expandvars('$NFS/code/nerfsampler/model/isrt_pretrained/model.pt'))
-    encoder = ImprovedSRTEncoder().to(device)
+    encoder = ImprovedSRTEncoder(pos_start_octave=-5).to(device)
     encoder.load_state_dict(state_dict['encoder'])
+    # decoder = NerfDecoder().to(device)
+    # decoder.load_state_dict(state_dict['decoder'])
     # Train!
     for epoch in range(first_epoch, args.num_epochs):
         model.train()
@@ -387,49 +390,52 @@ def main(args):
         progress_bar.set_description(f"Epoch {epoch}")
         for step, batch in enumerate(train_dataloader):
             # Skip steps until we reach the resumed step
-            input_images = batch.get('input_images').to(device)
-            input_camera_pos = batch.get('input_camera_pos').to(device)
-            input_rays = batch.get('input_rays').to(device)
-            # target_pixels = batch.get('target_pixels').to(device)
-            # target_camera_pos = batch.get('target_camera_pos').to(device)
-            # target_rays = batch.get('target_rays').to(device)
-            
-            torch.cuda.empty_cache()
-            with torch.no_grad():
-                x = encoder(input_images, input_camera_pos, input_rays)
-            clean_latents = x
-            # clean_latents = vqvae.encode(x, return_dict=False)
-
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
                 if step % args.gradient_accumulation_steps == 0:
                     progress_bar.update(1)
                 continue
             
+            input_images = batch.get('input_images').to(device)
+            input_camera_pos = batch.get('input_camera_pos').to(device)
+            input_rays = batch.get('input_rays').to(device)
+            target_pixels = batch.get('target_pixels').to(device)
+            target_camera_pos = batch.get('target_camera_pos').to(device)
+            target_rays = batch.get('target_rays').to(device)
+            
+            torch.cuda.empty_cache()
+            with torch.no_grad():
+                x = encoder(input_images, input_camera_pos, input_rays)
+            clean_latents = x.unsqueeze(0).mean(dim=2, keepdim=True) #[B, n_views, num_patches, channels_per_patch]
+            # clean_latents = vqvae.encode(x, return_dict=False)
+
             # Sample noise that we'll add to the images
             noise = torch.randn(clean_latents.shape).to(clean_latents.device)
-            bsz = clean_latents.shape[0]
             # Sample a random timestep for each image
             timesteps = torch.randint(
-                0, noise_scheduler.config.num_train_timesteps, (bsz,), device=clean_latents.device
+                0, noise_scheduler.config.num_train_timesteps, (clean_latents.shape[0],), device=clean_latents.device
             ).long()
 
             # Add noise to the clean images according to the noise magnitude at each timestep
             # (this is the forward diffusion process)
             noisy_latents = noise_scheduler.add_noise(clean_latents, noise, timesteps)
 
+            
             with accelerator.accumulate(model):
+                loss_terms = {}
                 # Predict the noise residual
-                denoised_latents = model(noisy_latents, timesteps).sample
+                outputs = model(
+                    hidden_states=noisy_latents,
+                    timestep=timesteps).transformed_states
 
                 if args.prediction_type == "epsilon":
-                    loss = F.mse_loss(denoised_latents, noise)  # this could have different weights!
+                    loss = F.mse_loss(outputs, noise)  # this could have different weights!
                 elif args.prediction_type == "sample":
                     alpha_t = _extract_into_tensor(
                         noise_scheduler.alphas_cumprod, timesteps, (clean_latents.shape[0], 1, 1, 1)
                     )
                     snr_weights = alpha_t / (1 - alpha_t)
                     loss = snr_weights * F.mse_loss(
-                        denoised_latents, clean_latents, reduction="none"
+                        outputs, clean_latents, reduction="none"
                     )  # use SNR weighting from distillation paper
                     loss = loss.mean()
                 else:
@@ -466,7 +472,7 @@ def main(args):
         accelerator.wait_for_everyone()
 
         # Generate sample images for visual inspection
-        if False:#accelerator.is_main_process:
+        if False: #accelerator.is_main_process:
             if epoch % args.save_images_epochs == 0 or epoch == args.num_epochs - 1:
                 denoiser = accelerator.unwrap_model(model)
                 if args.use_ema:
@@ -478,7 +484,6 @@ def main(args):
 
                 generator = torch.Generator(device=pipeline.device).manual_seed(0)
                 # run pipeline in inference (sample random noise and denoise)
-                pdb.set_trace()
                 images = pipeline(
                     generator=generator,
                     batch_size=args.eval_batch_size,
