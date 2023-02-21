@@ -1,25 +1,18 @@
 import argparse
 import inspect
 import logging
-import math
 import os
 import pdb
 osp = os.path
 
 import torch
-import torch.nn.functional as F
 
 import PIL
 from PIL import Image
 import datasets
 from nerfsampler import diffusers
-from accelerate import Accelerator
-from accelerate.logging import get_logger
 from nerfsampler.diffusers import DDPMScheduler
-from nerfsampler.diffusers.models.vq_model import VQModel
-from nerfsampler.diffusers.optimization import get_scheduler
 from nerfsampler.data.core import get_dataset
-from nerfsampler.diffusers.training_utils import EMAModel
 from tqdm.auto import tqdm
 from nerfsampler.networks.ldm import LDM, LatentDiffusionModel
 from nerfsampler.networks.prior_transformer import SimpleTransformer as Transformer
@@ -27,41 +20,13 @@ from nerfsampler.srt.encoder import ImprovedSRTEncoder
 from nerfsampler.srt.decoder import ImprovedSRTDecoder, NerfDecoder
 
 
-logger = get_logger(__name__, log_level="INFO")
-
-
-def _extract_into_tensor(arr, timesteps, broadcast_shape):
-    """
-    Extract values from a 1-D numpy array for a batch of indices.
-
-    :param arr: the 1-D numpy array.
-    :param timesteps: a tensor of indices into the array to extract.
-    :param broadcast_shape: a larger shape of K dimensions with the batch
-                            dimension equal to the length of timesteps.
-    :return: a tensor of shape [batch_size, 1, ...] where the shape has K dims.
-    """
-    if not isinstance(arr, torch.Tensor):
-        arr = torch.from_numpy(arr)
-    res = arr[timesteps].float().to(timesteps.device)
-    while len(res.shape) < len(broadcast_shape):
-        res = res[..., None]
-    return res.expand(broadcast_shape)
-
-
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="ddpm-model-64-2",
+        default="ddpm-model-64",
         help="The output directory where the model predictions and checkpoints will be written.",
-    )
-    parser.add_argument("--overwrite_output_dir", action="store_true")
-    parser.add_argument(
-        "--cache_dir",
-        type=str,
-        default='./cache',
-        help="The directory where the downloaded models and datasets will be stored.",
     )
     parser.add_argument(
         "--resolution",
@@ -78,6 +43,16 @@ def parse_args():
         default=768,
     )
     parser.add_argument(
+        "--num_layers",
+        type=int,
+        default=12,
+    )
+    parser.add_argument(
+        "--num_heads",
+        type=int,
+        default=18,
+    )
+    parser.add_argument(
         "--train_batch_size", type=int, default=32, help="Batch size (per device) for the training dataloader."
     )
     parser.add_argument(
@@ -92,41 +67,6 @@ def parse_args():
             " process."
         ),
     )
-    parser.add_argument("--num_epochs", type=int, default=100)
-    parser.add_argument("--save_images_epochs", type=int, default=10, help="How often to save images during training.")
-    parser.add_argument(
-        "--save_model_epochs", type=int, default=10, help="How often to save the model during training."
-    )
-    parser.add_argument(
-        "--gradient_accumulation_steps",
-        type=int,
-        default=1,
-        help="Number of updates steps to accumulate before performing a backward/update pass.",
-    )
-    parser.add_argument(
-        "--learning_rate",
-        type=float,
-        default=1e-4,
-        help="Initial learning rate (after the potential warmup period) to use.",
-    )
-    parser.add_argument(
-        "--lr_scheduler",
-        type=str,
-        default="cosine",
-        help=(
-            'The scheduler type to use. Choose between ["linear", "cosine", "cosine_with_restarts", "polynomial",'
-            ' "constant", "constant_with_warmup"]'
-        ),
-    )
-    parser.add_argument(
-        "--lr_warmup_steps", type=int, default=500, help="Number of steps for the warmup in the lr scheduler."
-    )
-    parser.add_argument("--adam_beta1", type=float, default=0.95, help="The beta1 parameter for the Adam optimizer.")
-    parser.add_argument("--adam_beta2", type=float, default=0.999, help="The beta2 parameter for the Adam optimizer.")
-    parser.add_argument(
-        "--adam_weight_decay", type=float, default=1e-6, help="Weight decay magnitude for the Adam optimizer."
-    )
-    parser.add_argument("--adam_epsilon", type=float, default=1e-08, help="Epsilon value for the Adam optimizer.")
     parser.add_argument(
         "--use_ema",
         action="store_true",
@@ -218,8 +158,8 @@ def main(args):
 
     # Initialize the model
     model = denoiser = Transformer(
-        num_layers=4,
-        num_attention_heads=16,
+        num_layers=args.num_layers,
+        num_attention_heads=args.num_heads,
         embedding_dim=args.latent_dims,
     ).to(device)
 
@@ -262,8 +202,8 @@ def main(args):
     decoder.load_state_dict(state_dict['decoder'])
 
     model.eval()
-    batch = next(iter(train_dataloader))
-    # batch = next(iter(val_dataloader))
+    # batch = next(iter(train_dataloader))
+    batch = next(iter(val_dataloader))
     input_images = batch.get('input_images').to(device)
     input_camera_pos = batch.get('input_camera_pos').to(device)
     input_rays = batch.get('input_rays').to(device)

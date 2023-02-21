@@ -9,8 +9,8 @@ scripts/
 *.ipynb
 *.png
 diffusers
-ddpm-model-64
-ddpm-model-64-2
+ddpm-model-64*
+outputs*
 
 __pycache__/
 *.pyc

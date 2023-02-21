@@ -60,15 +60,8 @@ def parse_args():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="ddpm-model-64-2",
+        default="ddpm-64",
         help="The output directory where the model predictions and checkpoints will be written.",
-    )
-    parser.add_argument("--overwrite_output_dir", action="store_true")
-    parser.add_argument(
-        "--cache_dir",
-        type=str,
-        default='./cache',
-        help="The directory where the downloaded models and datasets will be stored.",
     )
     parser.add_argument(
         "--resolution",
@@ -85,10 +78,20 @@ def parse_args():
         default=768,
     )
     parser.add_argument(
-        "--train_batch_size", type=int, default=32, help="Batch size (per device) for the training dataloader."
+        "--num_layers",
+        type=int,
+        default=12,
     )
     parser.add_argument(
-        "--eval_batch_size", type=int, default=16, help="The number of images to generate for evaluation."
+        "--num_heads",
+        type=int,
+        default=2,
+    )
+    parser.add_argument(
+        "--train_batch_size", type=int, default=16, help="Batch size (per device) for the training dataloader."
+    )
+    parser.add_argument(
+        "--eval_batch_size", type=int, default=32, help="The number of images to generate for evaluation."
     )
     parser.add_argument(
         "--dataloader_num_workers",
@@ -100,7 +103,7 @@ def parse_args():
         ),
     )
     parser.add_argument("--num_epochs", type=int, default=100)
-    parser.add_argument("--save_images_epochs", type=int, default=10, help="How often to save images during training.")
+    parser.add_argument("--eval_epochs", type=int, default=1, help="How often to eval.")
     parser.add_argument(
         "--save_model_epochs", type=int, default=10, help="How often to save the model during training."
     )
@@ -145,7 +148,7 @@ def parse_args():
     parser.add_argument(
         "--logger",
         type=str,
-        default="tensorboard",
+        default="wandb",
         choices=["tensorboard", "wandb"],
         help=(
             "Whether to use [tensorboard](https://www.tensorflow.org/tensorboard) or [wandb](https://www.wandb.ai)"
@@ -240,11 +243,13 @@ def main(args):
     # Initialize the model
     # vqvae = VQModel(latent_channels=args.latent_dims)
     model = denoiser = Transformer(
-        num_layers=4,
-        num_attention_heads=16,
+        num_layers=args.num_layers,
+        num_attention_heads=args.num_heads,
         embedding_dim=args.latent_dims,
     ) #in_channels=args.latent_dims, out_channels=args.latent_dims, 
     # model = LDM(vqvae, denoiser)
+    model.enable_xformers_memory_efficient_attention()
+    pdb.set_trace()
 
     # Create EMA for the model.
     if args.use_ema:
@@ -295,25 +300,12 @@ def main(args):
     batch_size = args.train_batch_size
     train_dataset = get_dataset("train", {'dataset':'msn'})
     train_dataloader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, num_workers=1, pin_memory=True,
-        shuffle=False, persistent_workers=True)
-    # eval_dataset = get_dataset("eval", {'dataset':'msn'})
-    # val_dataloader = torch.utils.data.DataLoader(
-    #     eval_dataset, batch_size=args.eval_batch_size, num_workers=1, 
-    #     shuffle=False, pin_memory=False, persistent_workers=True)
-
-    # Loaders for visualization scenes
-    # vis_loader_val = torch.utils.data.DataLoader(
-    #     eval_dataset, batch_size=1, shuffle=shuffle, worker_init_fn=data.worker_init_fn)
-    # vis_loader_train = torch.utils.data.DataLoader(
-    #     train_dataset, batch_size=1, shuffle=shuffle, worker_init_fn=data.worker_init_fn)
-    # print('Data loaders initialized.')
-
-    # data_vis_val = next(iter(vis_loader_val))  # Validation set data for visualization
-    # train_dataset.mode = 'val'  # Get validation info from training set just this once
-    # data_vis_train = next(iter(vis_loader_train))  # Validation set data for visualization
-    # train_dataset.mode = 'train'
-    # print('Visualization data loaded.')
+        train_dataset, batch_size=batch_size, num_workers=args.dataloader_num_workers, pin_memory=True,
+        shuffle=False, persistent_workers=args.dataloader_num_workers > 0)
+    eval_dataset = get_dataset("val", {'dataset':'msn'}, max_len=128)
+    val_dataloader = torch.utils.data.DataLoader(
+        eval_dataset, batch_size=args.eval_batch_size, num_workers=1, 
+        shuffle=False, pin_memory=False, persistent_workers=True)
 
     # Initialize the learning rate scheduler
     lr_scheduler = get_scheduler(
@@ -389,6 +381,7 @@ def main(args):
         progress_bar = tqdm(total=num_update_steps_per_epoch, disable=not accelerator.is_local_main_process)
         progress_bar.set_description(f"Epoch {epoch}")
         for step, batch in enumerate(train_dataloader):
+            break
             # Skip steps until we reach the resumed step
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
                 if step % args.gradient_accumulation_steps == 0:
@@ -398,15 +391,11 @@ def main(args):
             input_images = batch.get('input_images').to(device)
             input_camera_pos = batch.get('input_camera_pos').to(device)
             input_rays = batch.get('input_rays').to(device)
-            target_pixels = batch.get('target_pixels').to(device)
-            target_camera_pos = batch.get('target_camera_pos').to(device)
-            target_rays = batch.get('target_rays').to(device)
             
             torch.cuda.empty_cache()
             with torch.no_grad():
                 x = encoder(input_images, input_camera_pos, input_rays)
             clean_latents = x.unsqueeze(0).mean(dim=2, keepdim=True) #[B, n_views, num_patches, channels_per_patch]
-            # clean_latents = vqvae.encode(x, return_dict=False)
 
             # Sample noise that we'll add to the images
             noise = torch.randn(clean_latents.shape).to(clean_latents.device)
@@ -418,10 +407,8 @@ def main(args):
             # Add noise to the clean images according to the noise magnitude at each timestep
             # (this is the forward diffusion process)
             noisy_latents = noise_scheduler.add_noise(clean_latents, noise, timesteps)
-
             
             with accelerator.accumulate(model):
-                loss_terms = {}
                 # Predict the noise residual
                 outputs = model(
                     hidden_states=noisy_latents,
@@ -471,36 +458,40 @@ def main(args):
 
         accelerator.wait_for_everyone()
 
-        # Generate sample images for visual inspection
-        if False: #accelerator.is_main_process:
-            if epoch % args.save_images_epochs == 0 or epoch == args.num_epochs - 1:
-                denoiser = accelerator.unwrap_model(model)
-                if args.use_ema:
-                    ema_model.copy_to(denoiser.parameters())
-                pipeline = LatentDiffusionModel(
-                    denoiser=denoiser,
-                    scheduler=noise_scheduler,
-                )
-
-                generator = torch.Generator(device=pipeline.device).manual_seed(0)
-                # run pipeline in inference (sample random noise and denoise)
-                images = pipeline(
-                    generator=generator,
-                    batch_size=args.eval_batch_size,
-                    output_type="numpy",
-                ).images
-
-                # denormalize the images and save to tensorboard
-                images_processed = (images * 255).round().astype("uint8")
-
-                if args.logger == "tensorboard":
-                    accelerator.get_tracker("tensorboard").add_images(
-                        "test_samples", images_processed.transpose(0, 3, 1, 2), epoch
-                    )
-
-            if epoch % args.save_model_epochs == 0 or epoch == args.num_epochs - 1:
-                # save the model
-                pipeline.save_pretrained(args.output_dir)
+        if accelerator.is_main_process:
+            if epoch % args.eval_epochs == 0 or epoch == args.num_epochs - 1:
+                model.eval()
+                for batch in val_dataloader:
+                    input_images = batch.get('input_images').to(device)
+                    input_camera_pos = batch.get('input_camera_pos').to(device)
+                    input_rays = batch.get('input_rays').to(device)
+                    
+                    torch.cuda.empty_cache()
+                    with torch.no_grad():
+                        x = encoder(input_images, input_camera_pos, input_rays)
+                        clean_latents = x.unsqueeze(0).mean(dim=2, keepdim=True) #[B, n_views, num_patches, channels_per_patch]
+                        noise = torch.randn(clean_latents.shape).to(clean_latents.device)
+                        timesteps = torch.randint(
+                            0, noise_scheduler.config.num_train_timesteps, (clean_latents.shape[0],), device=clean_latents.device
+                        ).long()
+                        noisy_latents = noise_scheduler.add_noise(clean_latents, noise, timesteps)
+                        outputs = model(
+                            hidden_states=noisy_latents,
+                            timestep=timesteps).transformed_states
+                        if args.prediction_type == "epsilon":
+                            loss = F.mse_loss(outputs, noise)
+                        elif args.prediction_type == "sample":
+                            alpha_t = _extract_into_tensor(
+                                noise_scheduler.alphas_cumprod, timesteps, (clean_latents.shape[0], 1, 1, 1)
+                            )
+                            snr_weights = alpha_t / (1 - alpha_t)
+                            loss = snr_weights * F.mse_loss(
+                                outputs, clean_latents, reduction="none"
+                            )  # use SNR weighting from distillation paper
+                            loss = loss.mean()
+                        logs = {"val loss": loss.item()}
+                        accelerator.log(logs, step=global_step)
+                model.train()
 
     accelerator.end_training()
 

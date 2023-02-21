@@ -4,7 +4,7 @@ import os
 from PIL import Image
 from nerfsampler.diffusers import StableDiffusionInpaintPipeline as StableDiffusionInpaintPipeline
 
-class Inpainter:
+class Dreamfusion:
     def __init__(self):
         self.pipe = StableDiffusionInpaintPipeline.from_pretrained(
             "stabilityai/stable-diffusion-2-inpainting",
