@@ -5,56 +5,64 @@ from PIL import Image
 from torchvision.transforms.functional import pil_to_tensor, to_pil_image
 torch.backends.cudnn.benchmark = True
 
-if __name__ == "__main__":
-    #python scripts/inpaint.py -i=0
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-i', '--index', type=int)
-    parser.add_argument('-s', '--speed', type=int, default=4)
-    parser.add_argument('--pan_direction', default='right')
-    parser.add_argument('--overlap_thresh', default=20)
-    parser.add_argument('--separation', default=300)
-    args = parser.parse_args(sys.argv[1:])
-    if not torch.cuda.is_available():
-        raise ValueError("cuda is not available on this device")
+from . import cnet
+from nerfsampler.diffusers import StableDiffusionInpaintPipeline as StableDiffusionInpaintPipeline
 
-    
-    pipe = StableDiffusionInpaintPipeline.from_pretrained(
-        "stabilityai/stable-diffusion-2-inpainting",
-        # "runwayml/stable-diffusion-inpainting",
-        revision="fp16",
-        torch_dtype=torch.float16,
-    ).to('cuda')
+class DreamfusionTrainer(nn.Module):
+    def __init__(self):
+        self.pipe = StableDiffusionInpaintPipeline.from_pretrained(
+            "stabilityai/stable-diffusion-2-inpainting",
+            revision="fp16",
+            torch_dtype=torch.float16,
+        ).to('cuda')
+        self.pipe.enable_xformers_memory_efficient_attention()
 
-    prompt = ["an elegant bedroom in a giant tree, with branches and vines covering the walls and ceiling",]
+    def forward(self, img: Image, mask: Image, prompt: str):
+        init_img = img.convert('RGB').resize((768,768), Image.Resampling.BICUBIC)
+        mask_img = Image.open('mask2.png').resize((768,768), Image.Resampling.BICUBIC)
+        # = "a highly detailed snake in front of a yellow bowl on a playground"
+        os.makedirs('out0', exist_ok=True)
+        image = self.pipe(prompt=prompt, image=init_img, mask_image=mask_img,
+            height=768, width=768, guidance_scale=6,
+            num_inference_steps=80,
+        )['images'][0]
+        return image
 
-    n_views = 64
-    for view_ix in range(n_views):
-        shutil.rmtree(f"./out{p_ix}", ignore_errors=True)
-        keys = ordering[p_ix], ordering[p_ix+1]
-        root = './keyframes/'
+    def train_step(self, input_imgs, text_embeddings, pred_rgb, pred_depth, pred_normals, guidance_scale=100):
+        # interp to 512x512 to be fed into vae.
+        cnet.controlnet(self, 'a hamburger', mode='depth', target_map=pred_depth, input_image=pred_rgb)
+        # cnet.controlnet(pred_rgb_512, mode='normal', target_map=pred_normals)
+        pdb.set_trace()
 
-        p_ix = int(p_ix)
-        folder = f'out{p_ix}'
+        # timestep ~ U(0.02, 0.98) to avoid very high/low noise level
+        t = torch.randint(self.min_step, self.max_step + 1, [1], dtype=torch.long, device=self.device)
 
-        cur_image = pil_to_tensor(Image.open(root+keys[0]+'.png').convert('RGB').resize((512,512), resample=Image.Resampling.LANCZOS))
-        keyframe2 = pil_to_tensor(Image.open(root+keys[1]+'.png').convert('RGB').resize((512,512), resample=Image.Resampling.LANCZOS))
+        # encode image into latents with vae, requires grad!
+        latents = self.encode_imgs(input_imgs)
 
-        neg_prompt = 'blurry, multiple rooms, artifacts, border'
+        # predict the noise residual with unet, NO grad!
+        with torch.no_grad():
+            # add noise
+            noise = torch.randn_like(latents)
+            latents_noisy = self.scheduler.add_noise(latents, noise, t)
+            # pred noise
+            latent_model_input = torch.cat([latents_noisy] * 2)
+            noise_pred = self.unet(latent_model_input, t, encoder_hidden_states=text_embeddings).sample
 
-        joined_image = torch.cat((cur_image,
-            cur_image.new_zeros(3, cur_image.size(1), args.separation),
-            keyframe2), dim=-1)
-        total_width = joined_image.size(-1)
+        # perform guidance (high scale from paper!)
+        noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+        noise_pred = noise_pred_text + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
-        dx = (total_width - 512)//2
-        crop = joined_image[...,dx:-dx]
-        mask = torch.zeros_like(crop)
-        mask[...,512-dx:-512+dx] = 255
-        prompt = "to the left, " + prompts[keys[0]] + ", smoothly transitioning, to the right, " + prompts[keys[1]] + ", beautiful vivid high resolution"
-        with torch.autocast('cuda'):
-            output = pipe(prompt=prompt,
-                image=to_pil_image(crop), mask_image=to_pil_image(mask),
-                num_inference_steps=200, 
-                negative_prompt=neg_prompt, guidance_scale=7,
-            ).images[0]
-        joined_image[...,dx:-dx] = pil_to_tensor(output)
+        # w(t), sigma_t^2
+        w = (1 - self.alphas[t])
+        # w = self.alphas[t] ** 0.5 * (1 - self.alphas[t])
+        grad = w * (noise_pred - noise)
+
+        # clip grad for stable training?
+        # grad = grad.clamp(-10, 10)
+        grad = torch.nan_to_num(grad)
+
+        # since we omitted an item in grad, we need to use the custom function to specify the gradient
+        loss = SpecifyGradient.apply(latents, grad) 
+
+        return loss 

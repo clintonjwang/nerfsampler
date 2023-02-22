@@ -1,0 +1,6 @@
+task: dreamfusion
+n_frames: 32
+optimizer:
+  learning rate: 1e-3
+  weight decay: 1e-4
+  type: adam

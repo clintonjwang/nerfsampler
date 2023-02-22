@@ -17,7 +17,9 @@ def parse_args(args):
     parser.add_argument('-j', '--job_id', default="manual")
     parser.add_argument('-s', '--sweep_id', default=None)
     parser.add_argument('-e', '--edit_type', default=None)
+    parser.add_argument('-d', '--device_id', default=0)
     cmd_args = parser.parse_args(args)
+    os.environ['CUDA_VISIBLE_DEVICES']=str(cmd_args.device_id)
 
     config_name = cmd_args.job_id if cmd_args.config_name is None else cmd_args.config_name
     configs = glob(osp.join(CONFIG_DIR, "*", config_name+".yaml"))
@@ -93,9 +95,7 @@ def args_from_file(path, cmd_args=None):
     config_path = osp.join(CONFIG_DIR, "default.yaml")
     args = merge_args(yaml.safe_load(open(config_path, 'r')), args)
 
-    paths = args["paths"]
-    paths["slurm output dir"] = osp.expandvars(paths["slurm output dir"])
-    paths["job output dir"] = osp.join(paths["slurm output dir"], args["job_id"])
+    args["config path"] = path
     label_dict = yaml.safe_load(
         open(osp.join(CONFIG_DIR,'class_labels.yaml'), 'r'))
     if 'data' in args and 'class_labels' not in args['data'] and args['data']['scene_id'] in label_dict:

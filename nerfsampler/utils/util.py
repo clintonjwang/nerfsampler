@@ -54,17 +54,18 @@ def meshgrid(*tensors, indexing='ij') -> torch.Tensor:
 def get_optimizer(model, args: dict, lr=None):
     opt_settings = args["optimizer"]
     if lr is None:
-        lr = opt_settings["learning rate"]
+        lr = float(opt_settings["learning rate"])
+    wd = float(args["optimizer"]["weight decay"])
     if 'beta1' in opt_settings:
         betas = (opt_settings['beta1'], .999)
     else:
         betas = (.9, .999)
     if opt_settings['type'].lower() == 'adamw':
         return torch.optim.AdamW(model.parameters(), lr=lr,
-                                 weight_decay=args["optimizer"]["weight decay"], betas=betas)
+                                 weight_decay=wd, betas=betas)
     elif opt_settings['type'].lower() == 'adam':
         return torch.optim.Adam(model.parameters(), lr=lr,
-                                weight_decay=args["optimizer"]["weight decay"], betas=betas)
+                                weight_decay=wd, betas=betas)
     else:
         raise NotImplementedError
 

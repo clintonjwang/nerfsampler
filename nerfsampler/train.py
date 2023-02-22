@@ -11,7 +11,7 @@ from functools import partial
 
 from nerfsampler.utils import args as args_module
 from nerfsampler.srt.train import train_srt
-from nerfsampler.experiments.unconditional import parse_args, main as unconditional_main
+from nerfsampler.experiments.uncond_train import parse_args, main as unconditional_main
 
 def main():
     os.environ['WANDB_API_KEY'] = open(os.path.expandvars('$NFS/.wandb'), 'r').read().strip()
@@ -20,7 +20,6 @@ def main():
         raise ValueError("cuda is not available on this device")
     torch.backends.cudnn.benchmark = True
     method_dict = {
-        'srt': train_srt,
     }
     method = method_dict[args["task"]]
     

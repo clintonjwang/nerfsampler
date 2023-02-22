@@ -1,0 +1,9 @@
+parent: base_df
+prompt: HDR photo of an astronaut standing on a magnificent volcano, volcanic landscape, glorious sunset, hyper realistic, lava flow, 30mm lens, wide angle, extremely detailed 8k wallpaper, cinematic masterpiece
+neg_prompt: ugly, blurry, cartoon
+n_iterations: 150
+data:
+  scene_id: desolation-partial
+  type: 360
+optimizer:
+  learning rate: 5e-4
