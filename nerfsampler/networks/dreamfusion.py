@@ -15,13 +15,15 @@ from controlnet.cldm.model import create_model, load_state_dict
 
 class DreamFusion:
     def __init__(self):
+        # self.uncond_model = create_model(osp.expandvars('$NFS/code/controlnet/controlnet/models/cldm_v15.yaml')).cpu()
+        # self.uncond_model.load_state_dict(load_state_dict(osp.expandvars('$NFS/code/controlnet/controlnet/models/control_sd15_depth.pth'), location='cuda'))
         self.depth_model = create_model(osp.expandvars('$NFS/code/controlnet/controlnet/models/cldm_v15.yaml')).cpu()
         self.depth_model.load_state_dict(load_state_dict(osp.expandvars('$NFS/code/controlnet/controlnet/models/control_sd15_depth.pth'), location='cuda'))
         # self.normal_model = create_model(osp.expandvars('$NFS/code/controlnet/controlnet/models/cldm_v15.yaml')).cpu()
         # self.normal_model.load_state_dict(load_state_dict(osp.expandvars('$NFS/code/controlnet/controlnet/models/control_sd15_normal.pth'), location='cuda'))
         N = torch.numel(self.depth_model.alphas_cumprod)
-        self.min_step = int(N * 0.02)
-        self.max_step = int(N * 0.98)
+        self.min_step = int(N * 0.2) #.02
+        self.max_step = int(N * 0.8) #0.98
         self.device = torch.device('cuda')
 
     def embed_prompts(self, prompt, n_prompt, mode='depth'):
@@ -31,9 +33,7 @@ class DreamFusion:
             model = self.normal_model.cuda()
         return (model.get_learned_conditioning([prompt]), model.get_learned_conditioning([n_prompt]))
 
-    def step(self, prompt_embeds, control_img, init_image, mode='depth',
-        guidance_scale=7.5, seed=-1): #detect_resolution=384, bg_threshold=.4
-        H = W = 512
+    def step(self, prompt_embeds, init_image, control_img=None, mode='depth', guidance_scale=7.5):
         # if target_map is not None:
         #     target_map = (target_map.detach().cpu().squeeze().numpy() * 255).astype(np.uint8)
         if mode == 'depth':
@@ -49,20 +49,24 @@ class DreamFusion:
         # control = HWC3(target_map)
         # control = cv2.resize(control, (W, H), interpolation=cv2.INTER_LINEAR)
         # control = torch.from_numpy(control).float().cuda() / 255.0
-        init_image = init_image.permute(2,0,1).unsqueeze(0)
-        control = control_img.permute(2,0,1).unsqueeze(0) # b,3,h,w
-        if control.size(1) == 1:
-            control = control.tile(1,3,1,1)
+        assert init_image.size(1) == 3 # b,3,h,w
+        if control_img is None:
+            control = torch.zeros_like(init_image)
+        else:
+            control = control_img
+            if control.size(1) == 1:
+                control = control.tile(1,3,1,1)
 
         if config.save_memory:
             model.low_vram_shift(is_diffusing=False)
         cond = {"c_concat": [control], "c_crossattn": [prompt_embeds[0]]}
         un_cond = {"c_concat": [control], "c_crossattn": [prompt_embeds[1]]}
-        if config.save_memory:
-            model.low_vram_shift(is_diffusing=True)
 
         t = torch.randint(self.min_step, self.max_step + 1, [1], dtype=torch.long, device=self.device)
         latents = model.get_first_stage_encoding(model.first_stage_model.encode(init_image))
+
+        if config.save_memory:
+            model.low_vram_shift(is_diffusing=True)
         with torch.no_grad():
             noise = torch.randn_like(latents)
             latents_noisy = (extract_into_tensor(model.sqrt_alphas_cumprod, t, latents.shape) * latents +

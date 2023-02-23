@@ -1,0 +1,15 @@
+parent: base_df
+prompt: HDR photo of a giant tree, green forest landscape, anime, studio ghibli, ultra hd, extremely detailed 8k wallpaper, cinematic masterpiece
+neg_prompt: ugly, blurry
+n_iterations: 300
+guidance_scale: 50
+guidance_decay: 0.99
+depth_cutoff:
+- 0
+- 500
+data:
+  scene_id: desolation-partial
+  type: 360
+optimizer:
+  learning rate: 1e-4
+  weight decay: 0
