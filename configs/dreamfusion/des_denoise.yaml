@@ -1,14 +1,13 @@
 parent: base_df
-prompt: HDR photo of a hiker standing on a mountain at sunrise, 30mm lens, wide angle
-neg_prompt: ugly, blurry, cartoon, cloudy
+prompt: HDR photo, photorealistic, ultra hd, 30mm lens, wide angle
+neg_prompt: ugly, blurry, grainy, cloudy
 n_iterations: 300
-guidance_scale: 50
-guidance_decay: 0.99
+guidance_scale: 25
 depth_cutoff:
-- 0
+- 0.3
 - 500
 data:
-  scene_id: desolation-partial
+  scene_id: des250
   type: 360
 optimizer:
   learning rate: 1e-4

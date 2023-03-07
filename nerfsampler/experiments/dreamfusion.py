@@ -1,6 +1,8 @@
 import gc
 import os, pdb, torch
 import shutil
+
+import wandb
 osp = os.path
 nn = torch.nn
 F = nn.functional
@@ -8,6 +10,7 @@ F = nn.functional
 from tqdm import trange
 from torchvision.transforms.functional import pil_to_tensor, gaussian_blur
 from nerfstudio.cameras.cameras import Cameras
+# from torch_ema import ExponentialMovingAverage
 
 from nerfsampler import CODE_DIR
 from nerfsampler.utils.camera import animate_camera
@@ -22,6 +25,8 @@ from nerfsampler.networks import dreamfusion
 torch.backends.cudnn.benchmark = True
 
 def setup(args):
+    wandb.init(project="dreamfusion", name=args["job_id"],
+        config=wandb.helper.parse_config(args, exclude=['job_id']))
     dl_args = args["data"]
     scene_id = dl_args['scene_id']
     n_frames = args['n_frames']
@@ -70,71 +75,85 @@ def run_dreamfusion(args={}):
         # shutil.rmtree(folder, ignore_errors=True)
     os.makedirs(folder, exist_ok=True)
     shutil.copy(args['config path'], osp.join(folder, 'config.yaml'))
-
-    nerfacto, cams = ret
-    n_frames = args['n_frames']
-    sd_model = dreamfusion.DreamFusion()
     base_frame = 0
 
-    print('Starting training')
+    nerfacto, cams = ret
+    base_ray_bundle = cams.generate_rays(base_frame).to(nerfacto.device)
+    n_frames = args['n_frames']
+    sd_model = dreamfusion.DreamFusion()
     counter = 0
+    def cams2outs():
+        camera_ray_bundle = cams.generate_rays(np.random.randint(len(cams))).to(nerfacto.device)
+        animate_camera(camera_ray_bundle, frac=np.random.random())
+        outputs = nerfacto.get_outputs_for_camera_ray_bundle_grad(camera_ray_bundle)
+        if 'normals' in outputs:
+            normals = outputs['normals'].permute(2,0,1).unsqueeze(0)
+        else:
+            normals = None
+        depths = outputs['depth']
+        depths.clamp_(*args['depth_cutoff'])
+        depths = depths.min()/depths.permute(2,0,1).unsqueeze(0).tile(1,3,1,1)
+        # depths = gaussian_blur(depths, 5)
+        rgb = outputs['rgb'].permute(2,0,1).unsqueeze(0)
+        # if counter < 6:
+        #     Image.fromarray((rgb[0].permute(1,2,0)*255).detach().cpu().numpy().astype('uint8')).save(f'{folder}/{counter}_rgb.png')
+        #     Image.fromarray((depths[0].permute(1,2,0)*255).detach().cpu().numpy().astype('uint8')).save(f'{folder}/{counter}_depth.png')
+        #     counter += 1
+        return rgb, depths, normals
+
+    print('Starting training')
     with torch.autocast('cuda'):
+        # ema = ExponentialMovingAverage(nerfacto.parameters(), decay=args.get('ema_decay', 0.9))
+        if 'stage 1' in args:
+            s1args = args['stage 1']
+            optimizer = util.get_optimizer(nerfacto, s1args)
+            prompt_embeds = sd_model.embed_prompts(prompt=s1args['prompt'], n_prompt=s1args['neg_prompt'])
+            for cur_iter in trange(s1args['n_iterations']):
+                outputs = nerfacto.get_outputs_for_camera_ray_bundle_grad(base_ray_bundle)
+                rgb = outputs['rgb'].permute(2,0,1).unsqueeze(0)
+                sd_model.max_step -= 1
+                if cur_iter % 29 == 0:
+                    generate_view(nerfacto, base_ray_bundle,
+                        f'{folder}/stage1_{cur_iter//29:02d}.png', include_depth=True)
+                optimizer.zero_grad()
+                grad = sd_model.step(prompt_embeds, init_image=rgb,
+                    guidance_scale=s1args.get('guidance_scale', 10))
+                optimizer.step()
+                # ema.update()
+                del outputs, rgb, grad
+                gc.collect()
+                torch.cuda.empty_cache()
+
         optimizer = util.get_optimizer(nerfacto, args)
-        prompt_embeds = sd_model.embed_prompts(prompt=args['prompt'], n_prompt=args['neg_prompt'])
-        gs = args['guidance_scale']
+        prompt_embeds = sd_model.embed_prompts(prompt=args['prompt'], n_prompt=args['neg_prompt'], mode='normal')
+        gs = args.get('guidance_scale', 10)
+        if args.get('control_strength', None) is None:
+            CS = [1] * args['n_iterations']
+        else:
+            CS = np.linspace(*args['control_strength'], args['n_iterations'])
         for cur_iter in trange(args['n_iterations']):
-            gs *= args['guidance_decay']
-            camera_ray_bundle = cams.generate_rays(np.random.randint(len(cams))).to(nerfacto.device)
-            animate_camera(camera_ray_bundle, frac=np.random.random())
-            outputs = nerfacto.get_outputs_for_camera_ray_bundle_grad(camera_ray_bundle)
-            depths = outputs['depth']
-            depths.clamp_(*args['depth_cutoff'])
-            depths = depths.min()/depths
-            # depths -= depths.min()
-            # depths /= depths.max()
-            depths = gaussian_blur(depths.permute(2,0,1).unsqueeze(0), 5)
-            depths = depths.tile(1,3,1,1)
-            rgb = outputs['rgb'].permute(2,0,1).unsqueeze(0)
-            # if counter < 6:
-            #     Image.fromarray((rgb[0].permute(1,2,0)*255).detach().cpu().numpy().astype('uint8')).save(f'{folder}/{counter}_rgb.png')
-            #     Image.fromarray((depths[0].permute(1,2,0)*255).detach().cpu().numpy().astype('uint8')).save(f'{folder}/{counter}_depth.png')
-            #     counter += 1
-            loss = sd_model.step(prompt_embeds, init_image=rgb, control_img=depths, guidance_scale=gs)
+            if sd_model.max_step > 200:
+                sd_model.max_step -= 1
+            gs *= args.get('guidance_decay', 1)
+            if cur_iter % 29 == 0:
+                generate_view(nerfacto, base_ray_bundle,
+                    f'{folder}/stage2_{cur_iter//29:02d}.png', include_depth=True)
+            rgb, depths, normals = cams2outs()
             optimizer.zero_grad()
-            loss.backward()
+            # grad = sd_model.step(prompt_embeds, init_image=rgb, control_img=[normals], mode='normal',
+            #     guidance_scale=gs, control_strength=CS[cur_iter])
+            grad = sd_model.step(prompt_embeds, init_image=rgb, control_img=[depths],
+                guidance_scale=gs, control_strength=CS[cur_iter])
+            wandb.log({'grad': grad.norm().item()}, step=cur_iter)
             optimizer.step()
-            del outputs, depths, rgb, loss
+            # ema.update()
+            del depths, normals, rgb, grad
             gc.collect()
             torch.cuda.empty_cache()
-
-    camera_ray_bundle = cams.generate_rays(base_frame).to(nerfacto.device)
-    orig = torch.clone(camera_ray_bundle.origins)
-    dirs = torch.clone(camera_ray_bundle.directions)
+                
+    orig = torch.clone(base_ray_bundle.origins)
+    dirs = torch.clone(base_ray_bundle.directions)
+    # with ema.average_parameters():
     for frame in range(n_frames):
-        animate_camera(camera_ray_bundle, (orig, dirs), frac=frame/n_frames)
-        generate_view(nerfacto, camera_ray_bundle, f'{folder}/{frame:02d}.png')
-
-
-
-# def render_with_seg_fit_inpaint(nerfacto, camera_ray_bundle, inpainting, seg, n_frames=64):
-#     for ix in range(len(nerfacto.density_fns)):
-#         nerfacto.density_fns[ix] = attenuate_density_fxn(nerfacto.density_fns[ix], seg)
-#     nerfacto.field.get_density = attenuate_field_density(nerfacto.field, seg)
-#     outputs = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
-#     inpaint_coords = (camera_ray_bundle.origins + camera_ray_bundle.directions * outputs['depth'])
-#     in_range = inpaint_coords.norm(dim=-1) < 1
-#     rgb = outputs['rgb'][in_range]
-#     inpaint_coords = inpaint_coords[in_range]
-#     inpaint_scale = inpainting[in_range] / (rgb * 255)
-#     nerfacto.field.forward = forward_inpaint(nerfacto.field,
-#         inpaint_scale, inpaint_coords)
-    
-#     folder = 'results/fit_inpaint'
-#     os.makedirs(folder, exist_ok=True)
-    
-#     orig = torch.clone(camera_ray_bundle.origins)
-#     dirs = torch.clone(camera_ray_bundle.directions)
-#     for frame in range(n_frames):
-#         animate_camera(camera_ray_bundle, (orig, dirs), frac=frame/n_frames)
-#         nerfacto.field.t = frame / n_frames * 2 * pi
-#         generate_view(nerfacto, camera_ray_bundle, f'{folder}/{frame:02d}.png')
+        animate_camera(base_ray_bundle, (orig, dirs), frac=frame/n_frames)
+        generate_view(nerfacto, base_ray_bundle, f'{folder}/{frame:02d}.png')

@@ -1,0 +1,16 @@
+parent: base_df
+image parameterization: pixels
+use features: true
+backprop unet: false
+task: toy_dreamfusion
+prompt: people on a rocky landscape, HDR photo, photorealistic, ultra hd, 30mm lens, wide angle
+neg_prompt: ugly, blurry, grainy, cloudy, smooth
+n_iterations: 800
+guidance_scale: 50
+guidance_change: -0.05
+init noise step: 50
+step reduce frequency: 4
+direct reversal threshold: 0
+optimizer:
+  learning rate: 0.003
+  weight decay: 1e-5

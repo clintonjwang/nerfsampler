@@ -139,9 +139,14 @@ def render_with_affine_tx(nerfacto, camera_ray_bundle, orig_seg, n_frames=64):
         nerfacto.field.inv_tx = torch.inverse(nerfacto.field.animation_transform[:,:3])
         generate_view(nerfacto, camera_ray_bundle, f'{folder}/{frame:02d}.png')
 
-def generate_view(nerfacto, camera_ray_bundle, path):
-    rgb = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)['rgb']
-    Image.fromarray((rgb * 255).cpu().numpy().astype('uint8')).save(path)
+def generate_view(nerfacto, camera_ray_bundle, path, include_depth=False):
+    outputs = nerfacto.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
+    if include_depth:
+        depths = outputs['depth']
+        depths.clamp_min_(0.3)
+        depths = depths.min()/depths.tile(1,1,3)
+        Image.fromarray((depths * 255).cpu().numpy().astype('uint8')).save(path.replace('.png', '_depth.png'))
+    Image.fromarray((outputs['rgb'] * 255).cpu().numpy().astype('uint8')).save(path)
 
 
 def vis_seg(sims, in_range, class_labels, pix_embeddings):

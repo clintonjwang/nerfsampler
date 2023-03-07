@@ -1,5 +1,5 @@
 parent: base_df
-prompt: HDR photo of a giant tree, green forest landscape, anime, studio ghibli, ultra hd, extremely detailed 8k wallpaper, cinematic masterpiece
+prompt: HDR photo of a giant tree, green forest landscape, ultra hd, extremely detailed 8k wallpaper, cinematic masterpiece
 neg_prompt: ugly, blurry
 n_iterations: 300
 guidance_scale: 50

@@ -51,7 +51,11 @@ def meshgrid(*tensors, indexing='ij') -> torch.Tensor:
         return torch.meshgrid(*tensors)
 
 
-def get_optimizer(model, args: dict, lr=None):
+def get_optimizer(params, args: dict, lr=None):
+    if hasattr(params, 'parameters'):
+        params = params.parameters()
+    elif isinstance(params, torch.Tensor):
+        params = [params]
     opt_settings = args["optimizer"]
     if lr is None:
         lr = float(opt_settings["learning rate"])
@@ -61,10 +65,13 @@ def get_optimizer(model, args: dict, lr=None):
     else:
         betas = (.9, .999)
     if opt_settings['type'].lower() == 'adamw':
-        return torch.optim.AdamW(model.parameters(), lr=lr,
+        return torch.optim.AdamW(params, lr=lr,
                                  weight_decay=wd, betas=betas)
     elif opt_settings['type'].lower() == 'adam':
-        return torch.optim.Adam(model.parameters(), lr=lr,
+        return torch.optim.Adam(params, lr=lr,
+                                weight_decay=wd, betas=betas)
+    elif opt_settings['type'].lower() == 'sgd':
+        return torch.optim.SGD(params, lr=lr,
                                 weight_decay=wd, betas=betas)
     else:
         raise NotImplementedError

@@ -11,6 +11,7 @@ def main():
     import torch
     from nerfsampler.experiments.segment import run_segmenter
     from nerfsampler.experiments.dreamfusion import run_dreamfusion
+    from nerfsampler.experiments.toy_dfusion import toy_dreamfusion
 
     if not torch.cuda.is_available():
         raise ValueError("cuda is not available on this device")
@@ -23,6 +24,7 @@ def main():
         'segment': run_segmenter,
         'edit': run_segmenter,
         'dreamfusion': run_dreamfusion,
+        'toy_dreamfusion': toy_dreamfusion,
     }
     if args["task"] in method_dict.keys():
         method_dict[args["task"]](args=args)
