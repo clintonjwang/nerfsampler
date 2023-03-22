@@ -1,0 +1,22 @@
+task: toy_dreamfusion
+backprop unet: false
+clip guidance: 0
+augment: false
+accumulation: 1
+guidance_scale: 100
+init noise step: 0
+init min frac: 0.2
+init max frac: 0.9
+step reduce frequency: 3
+prompt: close-up photo of a dog, HDR photo, highly detailed
+neg_prompt: cat, blurry, grainy
+# prompt: close-up photo of a dog, HDR photo, highly detailed
+# neg_prompt: cat, blurry, grainy
+# prompt: people on a rocky landscape, HDR photo, photorealistic, ultra hd, 30mm lens, wide angle
+# neg_prompt: ugly, blurry, grainy, cloudy, smooth
+# prompt: HDR photo of a giant tree, green forest landscape, ultra hd, extremely detailed 8k wallpaper, cinematic masterpiece
+# neg_prompt: ugly, blurry
+optimizer:
+  learning rate: 1e-5
+  weight decay: 1e-5
+  type: adam

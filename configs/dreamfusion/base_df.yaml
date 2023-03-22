@@ -1,5 +1,10 @@
 task: dreamfusion
 n_frames: 32
+accumulation: 3
+init max frac: 0.8
+init min frac: 0.5
+coarse2fine: false
+condition on single view: false
 optimizer:
   learning rate: 1e-3
   weight decay: 1e-4

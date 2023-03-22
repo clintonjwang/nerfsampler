@@ -1,6 +1,8 @@
 """Entrypoint for inference"""
+import pdb
 import sys
 import os
+osp = os.path
 import numpy as np
 sys.path.insert(0,os.path.expandvars('$NFS/code/controlnet/controlnet'))
 from nerfsampler.utils import args as args_module

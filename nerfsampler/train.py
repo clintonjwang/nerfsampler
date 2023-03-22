@@ -2,8 +2,6 @@
 Entrypoint for training
 """
 import os
-# os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
-# os.environ["CUDA_VISIBLE_DEVICES"]="1"
 import sys
 import torch, wandb, os
 import numpy as np

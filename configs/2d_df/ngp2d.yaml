@@ -1,0 +1,24 @@
+parent: base_df2d
+image parameterization: instant-ngp
+use features: true
+augment: false
+accumulation: 5
+n_iterations: 300
+guidance_scale: 50
+guidance_change: -0.02
+encoding:
+  otype: HashGrid
+  n_levels: 7
+  n_features_per_level: 2
+  log2_hashmap_size: 14
+  base_resolution: 16
+  per_level_scale: 1.4
+network:
+  otype: FullyFusedMLP
+  activation: ReLU
+  output_activation: None
+  n_neurons: 64
+  n_hidden_layers: 1
+optimizer:
+  learning rate: 1e-4
+  weight decay: 1e-5

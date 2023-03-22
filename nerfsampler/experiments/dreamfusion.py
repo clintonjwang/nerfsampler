@@ -82,6 +82,8 @@ def run_dreamfusion(args={}):
     n_frames = args['n_frames']
     sd_model = dreamfusion.DreamFusion()
     counter = 0
+    if args['coarse2fine']:
+        raise NotImplementedError
     def cams2outs():
         camera_ray_bundle = cams.generate_rays(np.random.randint(len(cams))).to(nerfacto.device)
         animate_camera(camera_ray_bundle, frac=np.random.random())
@@ -124,28 +126,40 @@ def run_dreamfusion(args={}):
                 gc.collect()
                 torch.cuda.empty_cache()
 
+        if args['condition on single view']:
+            raise NotImplementedError
         optimizer = util.get_optimizer(nerfacto, args)
-        prompt_embeds = sd_model.embed_prompts(prompt=args['prompt'], n_prompt=args['neg_prompt'], mode='normal')
+        prompt_embeds = sd_model.embed_prompts(prompt=args['prompt'], n_prompt=args['neg_prompt'])
         gs = args.get('guidance_scale', 10)
         if args.get('control_strength', None) is None:
             CS = [1] * args['n_iterations']
         else:
             CS = np.linspace(*args['control_strength'], args['n_iterations'])
+        
+        acc_step = 1
         for cur_iter in trange(args['n_iterations']):
-            if sd_model.max_step > 200:
-                sd_model.max_step -= 1
-            gs *= args.get('guidance_decay', 1)
+            if args['step reduce frequency']:
+                if cur_iter % args['step reduce frequency'] == 0 and sd_model.min_step > 5:
+                    sd_model.min_step -= 1
+                if cur_iter % args['step reduce frequency'] == 0 and sd_model.max_step > 50:
+                    sd_model.max_step -= 1
+            gs += args['guidance_change']
             if cur_iter % 29 == 0:
                 generate_view(nerfacto, base_ray_bundle,
                     f'{folder}/stage2_{cur_iter//29:02d}.png', include_depth=True)
             rgb, depths, normals = cams2outs()
-            optimizer.zero_grad()
             # grad = sd_model.step(prompt_embeds, init_image=rgb, control_img=[normals], mode='normal',
             #     guidance_scale=gs, control_strength=CS[cur_iter])
-            grad = sd_model.step(prompt_embeds, init_image=rgb, control_img=[depths],
+            grad = sd_model.sds(prompt_embeds, init_image=rgb, control_img=[depths],
                 guidance_scale=gs, control_strength=CS[cur_iter])
             wandb.log({'grad': grad.norm().item()}, step=cur_iter)
-            optimizer.step()
+            if acc_step == args['accumulation']:
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+                acc_step = 1
+            else:
+                acc_step += 1
+
             # ema.update()
             del depths, normals, rgb, grad
             gc.collect()

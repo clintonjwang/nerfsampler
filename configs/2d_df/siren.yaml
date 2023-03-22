@@ -1,0 +1,14 @@
+parent: base_df2d
+image parameterization: siren
+use features: false
+backprop unet: false
+augment: true
+accumulation: 3
+n_iterations: 500
+guidance_scale: 20
+guidance_change: -0.01
+step reduce frequency: 4
+direct reversal threshold: 0
+optimizer:
+  learning rate: 2e-5
+  weight decay: 1e-6

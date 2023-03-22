@@ -1,0 +1,15 @@
+parent: base_df2d
+image parameterization: pixels
+use features: false
+augment: false
+init min frac: 0.5
+init max frac: 0.7
+step reduce frequency: 1
+accumulation: 1
+n_iterations: 500
+guidance_scale: 30
+guidance_change: 0
+init noise step: 5
+optimizer:
+  learning rate: 8e-3
+  weight decay: 1e-5

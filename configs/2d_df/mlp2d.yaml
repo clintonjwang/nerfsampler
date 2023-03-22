@@ -1,0 +1,19 @@
+parent: base_df2d
+image parameterization: mlp
+use features: true
+backprop unet: false
+augment: false
+n_iterations: 500
+guidance_change: -0.01
+encoding:
+  otype: Frequency
+  n_frequencies: 5
+network:
+  otype: FullyFusedMLP
+  activation: ReLU
+  output_activation: None
+  n_neurons: 128
+  n_hidden_layers: 4
+optimizer:
+  learning rate: 5e-6
+  weight decay: 1e-5
