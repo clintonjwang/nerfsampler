@@ -1,5 +1,5 @@
 results/
-models/
+# models/
 exported_model/
 temp/
 backup/
@@ -8,7 +8,7 @@ backup/
 scripts/
 *.ipynb
 *.png
-diffusers
+# diffusers
 ddpm-model-64*
 outputs*
 
