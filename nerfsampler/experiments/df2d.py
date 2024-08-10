@@ -28,7 +28,7 @@ def tv_norm(img):
     return torch.sum(torch.abs(img[..., :-1] - img[..., 1:])) + \
            torch.sum(torch.abs(img[..., :-1, :] - img[..., 1:, :]))
 
-def toy_dreamfusion(args={}):
+def dreamfusion2d(args={}):
     # wandb.init(project="dreamfusion", name=args["job_id"],
     #     config=wandb.helper.parse_config(args, exclude=['job_id']))
     os.chdir(f'{CODE_DIR}/nerfsampler')
@@ -43,21 +43,27 @@ def toy_dreamfusion(args={}):
     # for p in ldm.parameters():
     #     p.requires_grad_(False)
     # init_img = torch.tensor(np.array(Image.open('00.png').resize((512,512))), device='cuda', dtype=torch.float32)/255
-    init_img = torch.tensor(np.array(Image.open('cat.png').resize((512,512))), device='cuda', dtype=torch.float32)/255
+    
     if use_feats:
         dim = 64
         C = 4
-        init_feats = ldm.get_first_stage_encoding(ldm.encode_first_stage(init_img.permute(2,0,1).unsqueeze(0))).detach()
     else:
         dim = 512
         C = 3
+
+    if args['init_img'] is not None:
+        init_img = torch.tensor(np.array(Image.open(args['init_img']).resize((512,512))), device='cuda', dtype=torch.float32)/255
+        if use_feats:
+            init_feats = ldm.get_first_stage_encoding(ldm.encode_first_stage(init_img.permute(2,0,1).unsqueeze(0))).detach()
 
     net_type = args['image parameterization']
     accumulation = args['accumulation']
     acc_step = 1
     if net_type == 'pixels':
         if use_feats:
-            if args['init noise step']:
+            if args['init_img'] is None:
+                feats = torch.randn((1,C,dim,dim), device='cuda', dtype=torch.float32)
+            elif args['init noise step']:
                 feats = sd_model.add_noise(init_feats, args['init noise step'])
             else:
                 feats = init_feats
@@ -65,7 +71,10 @@ def toy_dreamfusion(args={}):
             optimizer = util.get_optimizer(feats, args)
             params = feats
         else:
-            rgb = init_img.permute(2,0,1).unsqueeze(0)
+            if args['init_img'] is None:
+                rgb = torch.randn((1,3,512,512), device='cuda', dtype=torch.float32)
+            else:
+                rgb = init_img.permute(2,0,1).unsqueeze(0)
             rgb.requires_grad_(True)
             optimizer = util.get_optimizer(rgb, args)
             params = rgb
@@ -90,22 +99,23 @@ def toy_dreamfusion(args={}):
         params = inr.parameters()
         optimizer = torch.optim.Adam(params, lr=1e-4)
         
-        for iteration in range(args.get('fitting_iterations', 2500)):
+        if args['init_img'] is not None:
+            for iteration in range(args.get('fitting_iterations', 2500)):
+                if use_feats:
+                    feats = inr(coords).reshape(dim, dim, C).permute(2,0,1).unsqueeze(0)
+                    loss = (feats - init_feats).norm()
+                else:
+                    rgb = inr(coords).reshape(dim, dim, C)
+                    loss = (rgb - init_img).norm()
+                if iteration % 200 == 0:
+                    print(loss.item())
+                loss.backward()
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
             if use_feats:
-                feats = inr(coords).reshape(dim, dim, C).permute(2,0,1).unsqueeze(0)
-                loss = (feats - init_feats).norm()
-            else:
-                rgb = inr(coords).reshape(dim, dim, C)
-                loss = (rgb - init_img).norm()
-            if iteration % 200 == 0:
-                print(loss.item())
-            loss.backward()
-            optimizer.step()
-            optimizer.zero_grad(set_to_none=True)
-        if use_feats:
-            with torch.autocast('cuda'):
-                rgb = ldm.decode_first_stage(feats)
-        to_pil(rgb).save(f'{folder}/inr.png')
+                with torch.autocast('cuda'):
+                    rgb = ldm.decode_first_stage(feats)
+            to_pil(rgb).save(f'{folder}/inr.png')
         optimizer = torch.optim.Adam(inr.parameters(), lr=float(args['optimizer']['learning rate']))
 
     augment = args['augment']
@@ -139,6 +149,7 @@ def toy_dreamfusion(args={}):
 
         exit()
 
+    t1 = 999
     for cur_iter in trange(args['n_iterations']):
         if args['step reduce frequency']:
             if cur_iter % args['step reduce frequency'] == 0 and sd_model.min_step > 5:
@@ -179,6 +190,7 @@ def toy_dreamfusion(args={}):
         #     grad = sd_model.direct_reversal(prompt_embeds, latents=aug_feats,
         #                 guidance_scale=gs)
         #     aug_feats.backward(grad)
+        log_freq = 9
 
         if args['backprop unet']:
             loss = sd_model.sds(prompt_embeds, latents=aug_feats,
@@ -191,8 +203,8 @@ def toy_dreamfusion(args={}):
             loss.backward()
 
         else:
-            grad = sd_model.sds(prompt_embeds, latents=aug_feats,
-                                guidance_scale=gs, latents_grad=False)
+            grad = sd_model.sds(prompt_embeds, latents=aug_feats, estimate_noise=args['noise estimation'], normalize=args['normalize_grads'],
+                                guidance_scale=gs, latents_grad=False, t1=t1, verbose=cur_iter % log_freq == 0)
             if tv_w:
                 if use_feats:
                     loss = -tv_norm(feats) * tv_w
@@ -202,7 +214,10 @@ def toy_dreamfusion(args={}):
                 aug_feats.backward(grad + aug_feats.grad)
             else:
                 aug_feats.backward(grad, inputs=params)
-
+            t1 -= 3
+            if t1 < 0:
+                break
+    
         if args['clip guidance']:
             if use_feats:
                 rgb = ldm.decode_first_stage_grad(feats)
@@ -213,14 +228,14 @@ def toy_dreamfusion(args={}):
             clip_loss = args['clip guidance'] * (-F.cosine_similarity(image_features, pos_embedding) + F.cosine_similarity(image_features, neg_embedding))
             clip_loss.backward(inputs=params)
 
-        if cur_iter % 29 == 0:
+        if cur_iter % log_freq == 0:
             with torch.autocast('cuda'):
                 if use_feats:
                     rgb = ldm.decode_first_stage(feats)
                     if feats.grad is not None:
                         print(feats.grad.norm().item(), feats.grad.abs().max().item())
                 
-                to_pil(rgb).save(f'{folder}/{cur_iter//29:02d}.png')
+                to_pil(rgb).save(f'{folder}/{cur_iter//log_freq:02d}.png')
         # wandb.log({'grad_norm': grad.norm().item()}, step=cur_iter)
         # print(loss.item())
         if acc_step == accumulation:

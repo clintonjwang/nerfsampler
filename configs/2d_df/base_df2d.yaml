@@ -1,5 +1,6 @@
-task: toy_dreamfusion
+task: dreamfusion2d
 backprop unet: false
+init_img: null
 clip guidance: 0
 augment: false
 accumulation: 1
@@ -9,7 +10,7 @@ init min frac: 0.2
 init max frac: 0.9
 step reduce frequency: 3
 prompt: close-up photo of a dog, HDR photo, highly detailed
-neg_prompt: cat, blurry, grainy
+neg_prompt: blurry, grainy
 # prompt: close-up photo of a dog, HDR photo, highly detailed
 # neg_prompt: cat, blurry, grainy
 # prompt: people on a rocky landscape, HDR photo, photorealistic, ultra hd, 30mm lens, wide angle
